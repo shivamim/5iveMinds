@@ -1,105 +1,111 @@
-import { useEffect, useState } from 'react'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
+import { History, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useState, useEffect } from 'react'
 import { pipelineApi } from '@/lib/api'
-import { PipelineRun } from '@/types'
-import { Clock, Trash2, ArrowRight } from 'lucide-react'
-import { formatDuration, getQualityColor } from '@/lib/utils'
-import { useNavigate } from 'react-router-dom'
+
+interface Run {
+  id: string
+  status: string
+  business_question: string
+  created_at: string
+  duration_ms: number
+}
 
 export function HistoryPage() {
-  const [runs, setRuns] = useState<PipelineRun[]>([])
+  const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadHistory()
-  }, [])
-
-  const loadHistory = async () => {
+  const fetchHistory = async () => {
     try {
+      setLoading(true)
       const res = await pipelineApi.getHistory()
-      setRuns(res.data)
-    } catch (e) {
-      console.error(e)
+      setRuns(res.data?.runs || [])
+      setError(null)
+    } catch (e: any) {
+      console.error('Failed to fetch history:', e)
+      setError('Failed to load history. Please check your API connection.')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (runId: string) => {
     try {
-      await pipelineApi.delete(id)
-      setRuns(runs.filter(r => r.id !== id))
+      await pipelineApi.delete(runId)
+      setRuns(runs.filter((r) => r.id !== runId))
     } catch (e) {
-      console.error(e)
+      console.error('Failed to delete run:', e)
     }
   }
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading history...</div>
-  }
+  useEffect(() => {
+    fetchHistory()
+  }, [])
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Pipeline History</h1>
-        <p className="text-muted-foreground">Previous analysis runs and results</p>
+        <p className="text-muted-foreground">View and manage past pipeline runs</p>
       </div>
 
-      <div className="space-y-3">
-        {runs.length === 0 ? (
-          <Card>
-            <CardContent className="p-8 text-center text-muted-foreground">
-              No pipeline runs yet. Start your first analysis!
-            </CardContent>
-          </Card>
-        ) : (
-          runs.map((run) => (
-            <Card key={run.id} className="hover:border-primary/50 transition-colors cursor-pointer" onClick={() => navigate('/dashboard')}>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="p-2 rounded-lg bg-muted">
-                      <Clock className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="font-medium">{run.dataset_name}</p>
-                      <p className="text-sm text-muted-foreground truncate max-w-md">{run.business_question}</p>
-                      <div className="flex gap-2 mt-1">
-                        <Badge variant={run.status === 'completed' ? 'success' : run.status === 'running' ? 'warning' : 'default'}>
-                          {run.status}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(run.started_at || '').toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+      {error && (
+        <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/5 text-red-500 text-sm">
+          {error}
+        </div>
+      )}
 
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <p className={`text-lg font-bold ${getQualityColor(run.quality_score_avg || 0)}`}>
-                        {run.quality_score_avg?.toFixed(1) || '—'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Quality Score</p>
+      {loading ? (
+        <Card>
+          <CardContent className="pt-6 text-center text-muted-foreground">
+            Loading history...
+          </CardContent>
+        </Card>
+      ) : runs.length === 0 ? (
+        <Card>
+          <CardContent className="pt-6 flex flex-col items-center text-center text-muted-foreground">
+            <History className="h-12 w-12 mb-4" />
+            <p>No pipeline runs yet.</p>
+            <p className="text-sm">Start your first analysis from the home page.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {runs.map((run) => (
+            <Card key={run.id}>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{run.business_question}</p>
+                    <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                      <span className={`capitalize ${
+                        run.status === 'completed' ? 'text-emerald-500' :
+                        run.status === 'failed' ? 'text-red-500' :
+                        'text-blue-500'
+                      }`}>
+                        {run.status}
+                      </span>
+                      <span>{new Date(run.created_at).toLocaleDateString()}</span>
+                      {run.duration_ms > 0 && (
+                        <span>{(run.duration_ms / 1000).toFixed(1)}s</span>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold">{run.total_time_ms ? formatDuration(run.total_time_ms) : '—'}</p>
-                      <p className="text-xs text-muted-foreground">Duration</p>
-                    </div>
-                    <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDelete(run.id) }}>
-                      <Trash2 className="h-4 w-4 text-muted-foreground hover:text-red-500" />
-                    </Button>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleDelete(run.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
               </CardContent>
             </Card>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
