@@ -11,21 +11,39 @@ import { Zap, ArrowRight, Brain, BarChart3, Shield, Clock } from 'lucide-react'
 export function LandingPage() {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const setCurrentRun = useStore((s) => s.setCurrentRun)
+  const datasets = useStore((s) => s.datasets)
 
   const handleStart = async () => {
     if (!question.trim()) return
+
+    // Check if a dataset is uploaded
+    if (datasets.length === 0) {
+      setError('Please upload a dataset first before starting the analysis.')
+      return
+    }
+
     setLoading(true)
+    setError(null)
+
     try {
       const response = await pipelineApi.start({
-        dataset_id: 'temp-dataset-id', // Will be replaced with actual
+        dataset_id: datasets[0].id,
         business_question: question,
       })
       setCurrentRun(response.data)
       navigate('/dashboard')
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to start pipeline:', error)
+      let msg = 'Failed to start analysis. Please check that the backend API is running and accessible.'
+      if (error.response?.data?.detail) {
+        msg = `Server error: ${error.response.data.detail}`
+      } else if (error.request) {
+        msg = 'Cannot connect to backend. Please check your API URL configuration (VITE_API_URL).'
+      }
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -58,56 +76,73 @@ export function LandingPage() {
               <span className="gradient-text">FiveMinds</span>
             </h1>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Five agents. One mind. Zero manual work. Upload your data, ask a business question, 
-              get a boardroom-ready analytics pipeline in under 5 seconds.
+              Five agents. One mind. Zero manual work. Upload your data, ask a business question,
+              and watch our multi-agent system deliver a complete analysis in seconds.
             </p>
           </motion.div>
 
-          {/* Upload + Question */}
+          {/* Upload Section */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.6 }}
-            className="max-w-2xl mx-auto space-y-6"
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="max-w-2xl mx-auto mb-12"
           >
             <DataUpload />
+          </motion.div>
 
-            <Card>
-              <CardContent className="p-6">
-                <label className="text-sm font-medium mb-2 block">Business Question</label>
-                <textarea
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="e.g., Which customers are most likely to churn in the next 30 days?"
-                  className="w-full min-h-[100px] rounded-lg border bg-background px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                <Button
-                  className="w-full mt-4"
-                  size="lg"
-                  onClick={handleStart}
-                  disabled={!question.trim() || loading}
-                >
-                  {loading ? 'Starting Pipeline...' : (
-                    <>
-                      Start Analysis <ArrowRight className="ml-2 h-4 w-4" />
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
+          {/* Question Input */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.3 }}
+            className="max-w-2xl mx-auto mb-8"
+          >
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="What would you like to know about your data?"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleStart()}
+                className="flex-1 px-4 py-3 rounded-lg border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              <Button
+                onClick={handleStart}
+                disabled={loading || !question.trim()}
+                className="px-6"
+              >
+                {loading ? (
+                  'Starting...'
+                ) : (
+                  <>
+                    Start Analysis
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+            {error && (
+              <p className="text-red-500 text-sm mt-2">{error}</p>
+            )}
+            {datasets.length > 0 && (
+              <p className="text-emerald-500 text-sm mt-2">
+                Dataset ready: {datasets[0].name}
+              </p>
+            )}
           </motion.div>
 
           {/* Features */}
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-16"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
           >
             {features.map((feature, i) => (
-              <Card key={i} className="bg-card/50 backdrop-blur">
-                <CardContent className="p-6 text-center">
-                  <feature.icon className="h-8 w-8 text-primary mx-auto mb-3" />
+              <Card key={i}>
+                <CardContent className="pt-6">
+                  <feature.icon className="h-8 w-8 text-primary mb-3" />
                   <h3 className="font-semibold mb-1">{feature.title}</h3>
                   <p className="text-sm text-muted-foreground">{feature.desc}</p>
                 </CardContent>
