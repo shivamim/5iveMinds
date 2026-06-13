@@ -16,11 +16,11 @@ function App() {
       <Route path="/" element={<LandingPage />} />
       <Route element={<Layout />}>
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/dashboard/data" element={<DataEngineeringPage />} />
-        <Route path="/dashboard/stats" element={<StatisticsPage />} />
-        <Route path="/dashboard/ml" element={<MLResultsPage />} />
-        <Route path="/dashboard/strategy" element={<StrategyPage />} />
-        <Route path="/dashboard/report" element={<ReportPage />} />
+        <Route path="/data-engineering" element={<DataEngineeringPage />} />
+        <Route path="/statistics" element={<StatisticsPage />} />
+        <Route path="/ml-results" element={<MLResultsPage />} />
+        <Route path="/strategy" element={<StrategyPage />} />
+        <Route path="/report" element={<ReportPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
