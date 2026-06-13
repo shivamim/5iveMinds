@@ -1,22 +1,16 @@
-import { Sidebar } from './Sidebar'
+import { Outlet } from 'react-router-dom'
 import { Header } from './Header'
-import { useStore } from '@/stores/appStore'
-import { cn } from '@/lib/utils'
+import { Sidebar } from './Sidebar'
 
-export function Layout({ children }: { children: React.ReactNode }) {
-  const { sidebarOpen } = useStore()
-
+export function Layout() {
   return (
     <div className="min-h-screen bg-background">
-      <Sidebar />
-      <div
-        className={cn(
-          'transition-all duration-300',
-          sidebarOpen ? 'lg:ml-64' : 'lg:ml-16'
-        )}
-      >
-        <Header />
-        <main className="p-6">{children}</main>
+      <Header />
+      <div className="flex">
+        <Sidebar />
+        <main className="flex-1 p-6">
+          <Outlet />
+        </main>
       </div>
     </div>
   )
