@@ -47,7 +47,7 @@ class DatasetService:
             row_count=len(df),
             column_count=len(df.columns),
             file_size_bytes=len(content),
-            dataset_schema=schema,
+            schema=schema,  # <-- FIXED: was dataset_schema
         )
         self.db.add(dataset)
         await self.db.commit()
