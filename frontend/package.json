@@ -20,7 +20,7 @@
     "react-plotly.js": "^2.6.0",
     "plotly.js": "^2.32.0",
     "framer-motion": "^11.0.0",
-    "lucide-react": "^0.390.0",
+    "lucide-react": "^0.469.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "tailwind-merge": "^2.3.0",
