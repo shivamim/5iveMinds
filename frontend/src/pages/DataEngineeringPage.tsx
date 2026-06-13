@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { FeatureImportanceChart } from '@/components/charts'
+import { DataUpload } from '@/components/data/DataUpload'
 
 export function DataEngineeringPage() {
-  const [activeTab, setActiveTab] = useState('schema')
-
+  const [activeTab, setActiveTab] = useState('upload')
   const schemaData = {
     columns: [
       { name: 'customer_id', type: 'int64', nulls: 0, unique: 1000 },
@@ -20,16 +19,27 @@ export function DataEngineeringPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Data Engineering</h1>
-        <p className="text-muted-foreground">Schema inference, imputation, and outlier detection</p>
+        <p className="text-muted-foreground">Upload data, schema inference, imputation, and outlier detection</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
+          <TabsTrigger value="upload">Upload</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
           <TabsTrigger value="imputation">Imputation</TabsTrigger>
           <TabsTrigger value="outliers">Outliers</TabsTrigger>
-          <TabsTrigger value="sql">SQL DDL</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="upload" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Upload Dataset</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DataUpload />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="schema" className="space-y-4">
           <Card>
@@ -53,7 +63,9 @@ export function DataEngineeringPage() {
                       <tr key={col.name} className="border-b last:border-0 hover:bg-muted/50">
                         <td className="py-3 px-4 font-mono text-xs">{col.name}</td>
                         <td className="py-3 px-4">
-                          <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs">{col.type}</span>
+                          <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs">
+                            {col.type}
+                          </span>
                         </td>
                         <td className="py-3 px-4">{col.nulls}</td>
                         <td className="py-3 px-4">{col.unique}</td>
@@ -69,43 +81,30 @@ export function DataEngineeringPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="imputation">
+        <TabsContent value="imputation" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Smart Imputation Results</CardTitle>
+              <CardTitle>Missing Value Imputation</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground">17 missing values imputed using KNN (k=5)</p>
+              <p className="text-muted-foreground">
+                Upload a dataset to see imputation recommendations. The Data Engineer agent will
+                automatically detect missing values and suggest the best imputation strategy.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="outliers">
+        <TabsContent value="outliers" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Outlier Detection</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground">23 outliers detected using IQR + Z-score hybrid</p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="sql">
-          <Card>
-            <CardHeader>
-              <CardTitle>Generated SQL DDL</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <pre className="bg-muted p-4 rounded-lg text-xs font-mono overflow-x-auto">
-{`CREATE TABLE churn_dataset (
-  customer_id INTEGER PRIMARY KEY,
-  age INTEGER,
-  satisfaction_score DECIMAL(5,2),
-  tenure INTEGER,
-  churn VARCHAR(10)
-);`}
-              </pre>
+              <p className="text-muted-foreground">
+                Upload a dataset to detect outliers. The system uses statistical methods and
+                isolation forests to identify anomalous data points.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
