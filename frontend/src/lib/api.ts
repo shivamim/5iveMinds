@@ -7,16 +7,22 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: false,
+  timeout: 60000,
 })
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type']
+    }
+    return config
+  },
+  (error) => Promise.reject(error)
+)
 
 api.interceptors.response.use(
   (response) => response,
@@ -32,7 +38,7 @@ api.interceptors.response.use(
 
 /** Convert HTTP(S) API URL to WebSocket URL for a pipeline run */
 export function getPipelineWsUrl(runId: string): string {
-  const wsBase = API_URL.replace(/^https?/, (m) => (m === 'https' ? 'wss' : 'ws'))
+  const wsBase = API_URL.replace(/^https?/, (m: string) => (m === 'https' ? 'wss' : 'ws'))
   return `${wsBase}/api/v1/pipeline/${runId}/ws`
 }
 
@@ -48,11 +54,19 @@ export const pipelineApi = {
 }
 
 export const datasetApi = {
-  upload: (file: File) => {
+  upload: (file: File, onProgress?: (percent: number) => void) => {
     const formData = new FormData()
     formData.append('file', file)
     return api.post('/datasets/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && onProgress) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          onProgress(percent)
+        }
+      },
     })
   },
   list: () => api.get('/datasets'),
@@ -61,27 +75,13 @@ export const datasetApi = {
   delete: (id: string) => api.delete(`/datasets/${id}`),
 }
 
-export const chartApi = {
-  getAll: (runId: string) => api.get(`/charts/${runId}`),
-  getByType: (runId: string, type: string) => api.get(`/charts/${runId}/${type}`),
-}
-
 export const reportApi = {
-  get: (runId: string, type = 'executive') =>
-    api.get(`/reports/${runId}?report_type=${type}`),
-  export: (runId: string, format: string) =>
-    api.post(`/reports/${runId}/export`, { format, sections: ['all'] }),
+  generate: (data: { run_id: string; format?: string }) =>
+    api.post('/reports/generate', data),
+  get: (reportId: string) => api.get(`/reports/${reportId}`),
 }
 
-export const agentApi = {
-  list: () => api.get('/agents'),
-  getConfig: (name: string) => api.get(`/agents/${name}/config`),
-}
-
-export const authApi = {
-  login: (email: string, password: string) =>
-    api.post('/auth/login', { email, password }),
-  register: (email: string, password: string, name: string) =>
-    api.post('/auth/register', { email, password, name }),
-  me: () => api.get('/auth/me'),
+export const chartApi = {
+  getData: (datasetId: string, chartType: string) =>
+    api.get(`/charts/${datasetId}/${chartType}`),
 }
