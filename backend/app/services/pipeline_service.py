@@ -1,5 +1,5 @@
 import asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 from fastapi import HTTPException
 from datetime import datetime
@@ -24,6 +24,7 @@ AGENT_PIPELINE = [
     ("strategist", StrategistAgent),
     ("designer", DesignerAgent),
 ]
+
 
 class PipelineService:
     def __init__(self, db: AsyncSession):
@@ -52,6 +53,12 @@ class PipelineService:
         await self.db.commit()
         await self.db.refresh(run)
         return run
+
+    async def execute_pipeline_with_session(self, run_id: uuid.UUID, ws_manager: WebSocketManager, session_maker: async_sessionmaker):
+        """Create a fresh DB session for the background task and run the pipeline."""
+        async with session_maker() as db:
+            self.db = db
+            await self.execute_pipeline(run_id, ws_manager)
 
     async def execute_pipeline(self, run_id: uuid.UUID, ws_manager: WebSocketManager):
         start_time = time.time()
