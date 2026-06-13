@@ -29,22 +29,29 @@ interface RunStatus {
 
 export function DashboardPage() {
   const currentRun = useStore((s) => s.currentRun)
-  const [status, setStatus] = useState<RunStatus | null>(null)
+  const setCurrentRun = useStore((s) => s.setCurrentRun)  // <-- ADDED THIS LINE
+  const [status, setStatus] = useState<<RunStatus | null>(null)
   const [wsConnected, setWsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollRef = useRef<<ReturnType<<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!currentRun) return
 
     setError(null)
 
-    // Poll status
+    // Poll status every 2 seconds
     const poll = setInterval(async () => {
       try {
         const res = await pipelineApi.getStatus(currentRun.id)
         setStatus(res.data)
+        
+        // <-- ADDED THESE 3 LINES: Update global store so top nav badge updates
+        if (res.data?.run) {
+          setCurrentRun(res.data.run)
+        }
+        
         setError(null)
       } catch (e: any) {
         console.error('Status poll error:', e)
@@ -73,6 +80,12 @@ export function DashboardPage() {
           pipelineApi.getStatus(currentRun.id)
             .then((res) => {
               setStatus(res.data)
+              
+              // <-- ADDED THESE 3 LINES: Update global store on WebSocket update too
+              if (res.data?.run) {
+                setCurrentRun(res.data.run)
+              }
+              
               setError(null)
             })
             .catch(console.error)
@@ -102,7 +115,7 @@ export function DashboardPage() {
         wsRef.current.close()
       }
     }
-  }, [currentRun])
+  }, [currentRun, setCurrentRun])  // <-- CHANGED: added setCurrentRun to dependency array
 
   if (!currentRun) {
     return (
