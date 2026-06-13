@@ -14,12 +14,12 @@ export function LandingPage() {
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const setCurrentRun = useStore((s) => s.setCurrentRun)
+  const addDataset = useStore((s) => s.addDataset)  // <-- ADDED
   const datasets = useStore((s) => s.datasets)
 
   const handleStart = async () => {
     if (!question.trim()) return
 
-    // Check if a dataset is uploaded
     if (datasets.length === 0) {
       setError('Please upload a dataset first before starting the analysis.')
       return
@@ -58,7 +58,6 @@ export function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Hero */}
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-purple-500/5 to-blue-500/5" />
         <div className="relative max-w-5xl mx-auto px-6 py-20">
@@ -81,17 +80,15 @@ export function LandingPage() {
             </p>
           </motion.div>
 
-          {/* Upload Section */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
             className="max-w-2xl mx-auto mb-12"
           >
-            <DataUpload />
+            <DataUpload onUploadComplete={(dataset) => addDataset(dataset)} />  {/* <-- CHANGED */}
           </motion.div>
 
-          {/* Question Input */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -132,7 +129,6 @@ export function LandingPage() {
             )}
           </motion.div>
 
-          {/* Features */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
