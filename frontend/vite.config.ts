@@ -9,6 +9,7 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  base: '/',
   server: {
     port: 3000,
     proxy: {
@@ -20,6 +21,17 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-tabs', '@radix-ui/react-progress', '@radix-ui/react-toast', '@radix-ui/react-tooltip', '@radix-ui/react-select', '@radix-ui/react-slider', '@radix-ui/react-switch', '@radix-ui/react-accordion'],
+          charts: ['recharts', 'react-plotly.js', 'plotly.js'],
+          query: ['@tanstack/react-query'],
+        },
+      },
+    },
   },
 })
