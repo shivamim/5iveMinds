@@ -8,7 +8,7 @@ interface Run {
   id: string
   status: string
   business_question: string
-  created_at: string
+  started_at: string
   total_time_ms: number
 }
 
@@ -21,7 +21,6 @@ export function HistoryPage() {
     try {
       setLoading(true)
       const res = await pipelineApi.getHistory()
-      // Backend returns array directly, not wrapped in {runs: [...]}
       const runsData = Array.isArray(res.data) ? res.data : (res.data?.runs || [])
       setRuns(runsData)
       setError(null)
@@ -89,7 +88,7 @@ export function HistoryPage() {
                       }`}>
                         {run.status}
                       </span>
-                      <span>{new Date(run.created_at).toLocaleDateString()}</span>
+                      <span>{new Date(run.started_at).toLocaleDateString()}</span>
                       {run.total_time_ms > 0 && (
                         <span>{(run.total_time_ms / 1000).toFixed(1)}s</span>
                       )}
