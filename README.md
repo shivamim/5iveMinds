@@ -174,8 +174,8 @@ Health     ->  http://localhost:8000/health
 ```env
 DATABASE_URL        = postgresql://postgres.YOUR_REF:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 GROQ_API_KEY        = gsk_xxxxxxxxxxxxxxxxxxxx
-FRONTEND_URL        = https://5ive-minds-two.vercel.app
-CORS_ORIGINS_STR    = https://5ive-minds-two.vercel.app,http://localhost:5173
+FRONTEND_URL        = https://example.app
+CORS_ORIGINS_STR    = https://example.app,http://localhost:
 SECRET_KEY          = your-random-32-char-string
 ENVIRONMENT         = production
 VERSION             = 2.0.0
