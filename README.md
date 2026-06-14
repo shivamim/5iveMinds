@@ -290,7 +290,7 @@ Distributed under the **MIT License** — see [LICENSE](LICENSE) for details.
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:a855f7,100:6366f1&height=120&section=footer" width="100%"/>
 
 *Built by someone who builds things that break,*
-*and breaks things that build.*
+*and breaks things to build better ones..*
 
 **[Shivam Shukla](https://github.com/shivamim)**
 
