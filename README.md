@@ -188,7 +188,7 @@ VERSION             = 2.0.0
 ### Frontend (Vercel)
 
 ```env
-VITE_API_URL = https://5iveminds-production.up.railway.app
+VITE_API_URL = https://your-backend.up.railway.app
 ```
 
 ---
@@ -294,10 +294,15 @@ Distributed under the **MIT License** - see [LICENSE](LICENSE) for details.
 <div align="center">
 
 ```
-Built with obsession by Shivam Shukla
-https://github.com/shivamim
++------------------------------------------------+
+|                                                |
+|   Built by someone who builds things that      |
+|   break, and breaks things that build.         |
+|                                                |
+|          Shivam Shukla                         |
+|          github.com/shivamim                   |
+|                                                |
++------------------------------------------------+
 ```
-
-*Made with love by someone who breathes AI*
 
 </div>
