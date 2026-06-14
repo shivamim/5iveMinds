@@ -1,3 +1,4 @@
+import React from 'react'
 import { motion } from 'framer-motion'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -82,7 +83,7 @@ export function AgentCard({ execution, index }: AgentCardProps) {
 
           {isRunning && (
             <div className="mt-3">
-              <Progress value={execution.output_data?.progress || 0} max={100} />
+              <Progress value={(execution.output_data?.progress as number) || 0} max={100} />
             </div>
           )}
 
