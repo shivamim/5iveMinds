@@ -9,7 +9,7 @@ interface Run {
   status: string
   business_question: string
   created_at: string
-  duration_ms: number
+  total_time_ms: number
 }
 
 export function HistoryPage() {
@@ -21,7 +21,9 @@ export function HistoryPage() {
     try {
       setLoading(true)
       const res = await pipelineApi.getHistory()
-      setRuns(res.data?.runs || [])
+      // Backend returns array directly, not wrapped in {runs: [...]}
+      const runsData = Array.isArray(res.data) ? res.data : (res.data?.runs || [])
+      setRuns(runsData)
       setError(null)
     } catch (e: any) {
       console.error('Failed to fetch history:', e)
@@ -88,8 +90,8 @@ export function HistoryPage() {
                         {run.status}
                       </span>
                       <span>{new Date(run.created_at).toLocaleDateString()}</span>
-                      {run.duration_ms > 0 && (
-                        <span>{(run.duration_ms / 1000).toFixed(1)}s</span>
+                      {run.total_time_ms > 0 && (
+                        <span>{(run.total_time_ms / 1000).toFixed(1)}s</span>
                       )}
                     </div>
                   </div>
