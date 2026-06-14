@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import React, { useMemo } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import {
   BarChart,
@@ -93,8 +93,8 @@ export function CorrelationHeatmap({ data }: { data: { x: string; y: string; val
               <div key={x} className="text-xs text-center p-1 text-muted-foreground truncate max-w-[80px]">{x}</div>
             ))}
             {uniqueY.map(y => (
-              <>
-                <div key={`label-${y}`} className="text-xs text-right p-1 text-muted-foreground truncate max-w-[80px]">{y}</div>
+              <React.Fragment key={`row-${y}`}>
+                <div className="text-xs text-right p-1 text-muted-foreground truncate max-w-[80px]">{y}</div>
                 {uniqueX.map(x => {
                   const point = data.find(d => d.x === x && d.y === y)
                   const value = point?.value ?? 0
@@ -109,7 +109,7 @@ export function CorrelationHeatmap({ data }: { data: { x: string; y: string; val
                     </div>
                   )
                 })}
-              </>
+              </React.Fragment>
             ))}
           </div>
         </div>
