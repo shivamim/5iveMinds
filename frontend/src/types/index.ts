@@ -1,21 +1,21 @@
 export interface PipelineRun {
   id: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'queued' | 'running' | 'completed' | 'failed'
   business_question: string
-  dataset_id: string
-  created_at: string
-  updated_at: string
-  duration_ms?: number
-  quality_score?: number
+  dataset_name: string
+  started_at?: string
+  completed_at?: string
+  total_time_ms?: number
+  quality_score_avg?: number
 }
 
 export interface Dataset {
   id: string
-  name: string
-  size: number
-  rows: number
-  columns: number
-  created_at: string
+  filename: string
+  file_size_bytes: number
+  row_count: number
+  column_count: number
+  uploaded_at?: string
 }
 
 export interface AgentInfo {
@@ -24,6 +24,18 @@ export interface AgentInfo {
   status: 'idle' | 'running' | 'completed' | 'failed'
   progress: number
   message: string
+}
+
+export interface AgentExecution {
+  id: string
+  agent_name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  quality_score?: number
+  execution_time_ms?: number
+  output_data?: Record<string, unknown>
+  error_message?: string
+  started_at?: string
+  completed_at?: string
 }
 
 export type Theme = 'dark' | 'light' | 'system'
