@@ -35,13 +35,9 @@ export function DashboardPage() {
   const [wsConnected, setWsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  // Store runId and currentRun in refs so poll/WS callbacks never go stale
-  const runIdRef = useRef<string | null>(null)
   const currentRunRef = useRef<PipelineRun | null>(null)
 
-  // Keep refs in sync
   currentRunRef.current = currentRun
-  if (currentRun) runIdRef.current = currentRun.id
 
   const fetchStatus = useCallback(async (runId: string) => {
     try {
@@ -64,7 +60,6 @@ export function DashboardPage() {
     }
   }, [setCurrentRun])
 
-  // This effect only runs when the run ID changes, not on every store update
   useEffect(() => {
     if (!currentRun?.id) return
     const runId = currentRun.id
@@ -72,13 +67,10 @@ export function DashboardPage() {
     setError(null)
     setStatus(null)
 
-    // Initial fetch
     fetchStatus(runId)
 
-    // Poll every 2 seconds
     const poll = setInterval(() => fetchStatus(runId), 2000)
 
-    // WebSocket for real-time push updates
     let socket: WebSocket | null = null
     try {
       const wsUrl = getPipelineWsUrl(runId)
@@ -90,7 +82,6 @@ export function DashboardPage() {
       }
 
       socket.onmessage = () => {
-        // Any WS message triggers a fresh status fetch
         fetchStatus(runId)
       }
 
@@ -115,7 +106,6 @@ export function DashboardPage() {
         wsRef.current = null
       }
     }
-  // Only re-run when run ID changes — NOT on every currentRun update
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRun?.id, fetchStatus])
 
@@ -158,7 +148,6 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -199,7 +188,6 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* Progress */}
       <Card>
         <CardHeader>
           <CardTitle>Pipeline Progress</CardTitle>
@@ -215,7 +203,6 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Agent Executions */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold">Agent Executions</h2>
         {executions.length === 0 ? (
