@@ -6,6 +6,17 @@ import { Moon, Sun, Bell, Menu } from 'lucide-react'
 export function Header() {
   const { theme, setTheme, sidebarOpen, setSidebarOpen, currentRun } = useStore()
 
+  const getBadgeVariant = (status: string) => {
+    switch (status) {
+      case 'running':
+        return 'warning'
+      case 'completed':
+        return 'success'
+      default:
+        return 'default'
+    }
+  }
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
       <div className="flex items-center gap-4">
@@ -20,7 +31,7 @@ export function Header() {
 
         {currentRun && (
           <div className="flex items-center gap-3">
-            <Badge variant={currentRun.status === 'running' ? 'warning' : currentRun.status === 'completed' ? 'success' : 'default'}>
+            <Badge variant={getBadgeVariant(currentRun.status)}>
               {currentRun.status}
             </Badge>
             <span className="text-sm text-muted-foreground hidden sm:inline">
