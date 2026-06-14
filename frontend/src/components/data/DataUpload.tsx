@@ -29,7 +29,6 @@ export function DataUpload({ onUploadComplete }: DataUploadProps = {}) {
   const abortControllerRef = useRef<AbortController | null>(null)
   const addDataset = useStore((s) => s.addDataset)
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (abortControllerRef.current) {
@@ -43,7 +42,6 @@ export function DataUpload({ onUploadComplete }: DataUploadProps = {}) {
       const file = acceptedFiles[0]
       if (!file) return
 
-      // Reset states
       setUploading(true)
       setProgress(0)
       setError(null)
@@ -56,7 +54,6 @@ export function DataUpload({ onUploadComplete }: DataUploadProps = {}) {
 
         const data = response.data as UploadResponse
 
-        // Map backend response fields to store Dataset type
         const dataset = {
           id: data.id,
           filename: data.filename,
@@ -69,7 +66,6 @@ export function DataUpload({ onUploadComplete }: DataUploadProps = {}) {
         setUploaded({ id: data.id, name: data.filename })
         addDataset(dataset)
 
-        // Call parent callback if provided
         if (onUploadComplete) {
           onUploadComplete(dataset)
         }
@@ -180,7 +176,7 @@ export function DataUpload({ onUploadComplete }: DataUploadProps = {}) {
           <motion.div
             key="progress"
             initial={{ opacity: 0, y: 10 }}
-n            animate={{ opacity: 1, y: 0 }}
+            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
             <Card>
@@ -217,11 +213,7 @@ n            animate={{ opacity: 1, y: 0 }}
                       <p className="text-sm text-muted-foreground">Uploaded successfully</p>
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRemove}
-                  >
+                  <Button variant="ghost" size="sm" onClick={handleRemove}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
@@ -245,11 +237,7 @@ n            animate={{ opacity: 1, y: 0 }}
                     <p className="font-medium text-red-500">Upload Failed</p>
                     <p className="text-sm text-muted-foreground mt-1">{error}</p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRemove}
-                  >
+                  <Button variant="ghost" size="sm" onClick={handleRemove}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
