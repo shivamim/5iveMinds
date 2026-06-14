@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useStore } from '@/stores/appStore'
 import type { PipelineRun } from '@/types'
 import { pipelineApi, getPipelineWsUrl } from '@/lib/api'
@@ -35,83 +35,71 @@ export function DashboardPage() {
   const [wsConnected, setWsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Store runId and currentRun in refs so poll/WS callbacks never go stale
+  const runIdRef = useRef<string | null>(null)
+  const currentRunRef = useRef<PipelineRun | null>(null)
 
+  // Keep refs in sync
+  currentRunRef.current = currentRun
+  if (currentRun) runIdRef.current = currentRun.id
+
+  const fetchStatus = useCallback(async (runId: string) => {
+    try {
+      const res = await pipelineApi.getStatus(runId)
+      setStatus(res.data)
+      if (res.data?.run && currentRunRef.current) {
+        setCurrentRun({
+          ...currentRunRef.current,
+          status: res.data.run.status as PipelineRun['status'],
+          total_time_ms: res.data.run.total_time_ms,
+          quality_score_avg: res.data.run.quality_score_avg,
+        })
+      }
+      setError(null)
+    } catch (e: any) {
+      console.error('Status poll error:', e)
+      if (e.response?.status === 404) {
+        setError('Pipeline run not found. It may have been deleted.')
+      }
+    }
+  }, [setCurrentRun])
+
+  // This effect only runs when the run ID changes, not on every store update
   useEffect(() => {
-    if (!currentRun) return
+    if (!currentRun?.id) return
+    const runId = currentRun.id
 
     setError(null)
+    setStatus(null)
 
-    // Poll status every 2 seconds
-    const poll = setInterval(async () => {
-      try {
-        const res = await pipelineApi.getStatus(currentRun.id)
-        setStatus(res.data)
+    // Initial fetch
+    fetchStatus(runId)
 
-        // Update global store so top nav badge updates
-        if (res.data?.run) {
-          setCurrentRun({
-            ...currentRun,
-            status: res.data.run.status as PipelineRun['status'],
-            total_time_ms: res.data.run.total_time_ms,
-            quality_score_avg: res.data.run.quality_score_avg,
-          })
-        }
+    // Poll every 2 seconds
+    const poll = setInterval(() => fetchStatus(runId), 2000)
 
-        setError(null)
-      } catch (e: any) {
-        console.error('Status poll error:', e)
-        if (e.response?.status === 404) {
-          setError('Pipeline run not found. It may have been deleted.')
-        }
-      }
-    }, 2000)
-    pollRef.current = poll
-
-    // WebSocket for real-time updates
+    // WebSocket for real-time push updates
+    let socket: WebSocket | null = null
     try {
-      const wsUrl = getPipelineWsUrl(currentRun.id)
-      const socket = new WebSocket(wsUrl)
+      const wsUrl = getPipelineWsUrl(runId)
+      socket = new WebSocket(wsUrl)
 
       socket.onopen = () => {
         console.log('WebSocket connected')
         setWsConnected(true)
       }
 
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          console.log('WS Update:', data)
-          // Refresh status on any update
-          pipelineApi.getStatus(currentRun.id)
-            .then((res) => {
-              setStatus(res.data)
-
-              // Update global store on WebSocket update too
-              if (res.data?.run) {
-                setCurrentRun({
-                  ...currentRun,
-                  status: res.data.run.status as PipelineRun['status'],
-                  total_time_ms: res.data.run.total_time_ms,
-                  quality_score_avg: res.data.run.quality_score_avg,
-                })
-              }
-
-              setError(null)
-            })
-            .catch(console.error)
-        } catch (e) {
-          console.error('WS message parse error:', e)
-        }
+      socket.onmessage = () => {
+        // Any WS message triggers a fresh status fetch
+        fetchStatus(runId)
       }
 
-      socket.onerror = (e) => {
-        console.error('WS Error:', e)
+      socket.onerror = () => {
+        console.log('WS unavailable — polling only')
         setWsConnected(false)
       }
 
       socket.onclose = () => {
-        console.log('WebSocket closed')
         setWsConnected(false)
       }
 
@@ -124,15 +112,18 @@ export function DashboardPage() {
       clearInterval(poll)
       if (wsRef.current) {
         wsRef.current.close()
+        wsRef.current = null
       }
     }
-  }, [currentRun, setCurrentRun])
+  // Only re-run when run ID changes — NOT on every currentRun update
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRun?.id, fetchStatus])
 
   if (!currentRun) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] text-center">
         <Activity className="h-16 w-16 text-muted-foreground mb-4" />
-n        <h2 className="text-2xl font-bold mb-2">No Active Pipeline</h2>
+        <h2 className="text-2xl font-bold mb-2">No Active Pipeline</h2>
         <p className="text-muted-foreground">
           Start a new analysis from the home page
         </p>
