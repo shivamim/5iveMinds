@@ -14,7 +14,6 @@ export function LandingPage() {
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const setCurrentRun = useStore((s) => s.setCurrentRun)
-  const addDataset = useStore((s) => s.addDataset)  // <-- ADDED
   const datasets = useStore((s) => s.datasets)
 
   const handleStart = async () => {
@@ -33,7 +32,18 @@ export function LandingPage() {
         dataset_id: datasets[0].id,
         business_question: question,
       })
-      setCurrentRun(response.data)
+      // Map backend response to our PipelineRun type
+      const runData = response.data
+      setCurrentRun({
+        id: runData.id,
+        status: runData.status,
+        business_question: runData.business_question,
+        dataset_name: runData.dataset_name || datasets[0].filename,
+        total_time_ms: runData.total_time_ms,
+        quality_score_avg: runData.quality_score_avg,
+        started_at: runData.started_at,
+        completed_at: runData.completed_at,
+      })
       navigate('/dashboard')
     } catch (error: any) {
       console.error('Failed to start pipeline:', error)
@@ -86,7 +96,7 @@ export function LandingPage() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="max-w-2xl mx-auto mb-12"
           >
-            <DataUpload onUploadComplete={(dataset) => addDataset(dataset)} />  {/* <-- CHANGED */}
+            <DataUpload />
           </motion.div>
 
           <motion.div
@@ -124,7 +134,7 @@ export function LandingPage() {
             )}
             {datasets.length > 0 && (
               <p className="text-emerald-500 text-sm mt-2">
-                Dataset ready: {datasets[0].name}
+                Dataset ready: {datasets[0].filename} ({datasets[0].row_count.toLocaleString()} rows, {datasets[0].column_count} columns)
               </p>
             )}
           </motion.div>
