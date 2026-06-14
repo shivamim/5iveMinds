@@ -8,7 +8,20 @@ import { datasetApi } from '@/lib/api'
 import { useStore } from '@/stores/appStore'
 import { Upload, FileSpreadsheet, X, CheckCircle2, AlertCircle } from 'lucide-react'
 
-export function DataUpload() {
+interface DataUploadProps {
+  onUploadComplete?: (dataset: { id: string; filename: string; row_count: number; column_count: number; file_size_bytes: number }) => void
+}
+
+interface UploadResponse {
+  id: string
+  filename: string
+  row_count: number
+  column_count: number
+  file_size_bytes: number
+  uploaded_at?: string
+}
+
+export function DataUpload({ onUploadComplete }: DataUploadProps = {}) {
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [uploaded, setUploaded] = useState<{ id: string; name: string } | null>(null)
@@ -38,12 +51,29 @@ export function DataUpload() {
 
       try {
         const response = await datasetApi.upload(file, (percent: number) => {
-          // Real upload progress from axios
           setProgress(percent)
         })
 
-        setUploaded({ id: response.data.id, name: file.name })
-        addDataset(response.data)
+        const data = response.data as UploadResponse
+
+        // Map backend response fields to store Dataset type
+        const dataset = {
+          id: data.id,
+          filename: data.filename,
+          file_size_bytes: data.file_size_bytes,
+          row_count: data.row_count,
+          column_count: data.column_count,
+          uploaded_at: data.uploaded_at || new Date().toISOString(),
+        }
+
+        setUploaded({ id: data.id, name: data.filename })
+        addDataset(dataset)
+
+        // Call parent callback if provided
+        if (onUploadComplete) {
+          onUploadComplete(dataset)
+        }
+
         setProgress(100)
       } catch (err: any) {
         console.error('Upload failed:', err)
@@ -55,7 +85,6 @@ export function DataUpload() {
         } else if (err.code === 'ECONNABORTED') {
           errorMessage = 'Upload timed out. The file may be too large or the server is unreachable.'
         } else if (err.response) {
-          // Server responded with error
           const status = err.response.status
           const detail = err.response.data?.detail || err.response.data?.message
 
@@ -71,7 +100,6 @@ export function DataUpload() {
             errorMessage = `Server error (${status}). Please try again.`
           }
         } else if (err.request) {
-          // No response received - network/CORS issue
           errorMessage = 'Cannot connect to server. Please check your internet connection and ensure the backend API URL is configured correctly in your environment variables (VITE_API_URL).'
         }
 
@@ -82,7 +110,7 @@ export function DataUpload() {
         abortControllerRef.current = null
       }
     },
-    [addDataset]
+    [addDataset, onUploadComplete]
   )
 
   const handleRemove = () => {
@@ -152,7 +180,7 @@ export function DataUpload() {
           <motion.div
             key="progress"
             initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
+n            animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
             <Card>
