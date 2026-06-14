@@ -1,77 +1,124 @@
-# FiveMinds
-
-**Five Agents. One Mind. Zero Manual Work.**
-
-Upload a CSV. Ask a question. Get boardroom-ready insights in under 30 seconds.
-
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Online-blue?style=for-the-badge)](https://5ive-minds-two.vercel.app)
-[![API Docs](https://img.shields.io/badge/API-Docs-purple?style=for-the-badge)](https://5iveminds-production.up.railway.app/docs)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-
----
-
-## What is FiveMinds?
-
-FiveMinds is a multi-agent AI platform that automates the entire data analysis pipeline from raw CSV to executive report, with no code and no manual work.
-
-Five specialized AI agents collaborate in sequence:
-
-| Agent | Role |
-|-------|------|
-| **Data Engineer** | Schema inference, cleaning, imputation, outlier detection |
-| **Statistician** | EDA, hypothesis testing, correlation matrices |
-| **ML Engineer** | AutoML across 5 models with SHAP explainability |
-| **Strategist** | Business recommendations with ROI projections |
-| **Designer** | Boardroom-ready PDF / Excel / PPT / HTML reports |
-
----
-
-## Demo
-
-Upload `churn_dataset.csv`, ask "Why are customers churning?", get a complete analysis in ~27 seconds.
-
-- **Pipeline Dashboard** - live agent progress, quality scores, execution logs
-- **Statistics** - distribution charts, correlation heatmaps, hypothesis tests
-- **ML Results** - feature importance, 5-model comparison, SHAP summary
-- **Strategic Insights** - ROI projections, prioritized recommendations
-- **Executive Report** - one-click export in 4 formats
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 + Vite + TypeScript + Tailwind CSS + shadcn/ui + Zustand + Recharts |
-| Backend | FastAPI (async) + SQLAlchemy 2.0 + asyncpg + Pydantic v2 |
-| Database | Supabase PostgreSQL 15 |
-| LLM | Groq API (Llama 3 8B / 70B) |
-| Hosting | Vercel (frontend) + Railway (backend) + Supabase (database) |
-
----
-
-## Architecture
+<div align="center">
 
 ```
-FRONTEND (Vercel)
-  React 18 + Vite + TypeScript + Tailwind CSS + shadcn/ui
-  Zustand | Recharts | Framer Motion | React Dropzone
-        |
-        |  HTTPS / WebSocket
-        v
-BACKEND (Railway)
-  FastAPI + SQLAlchemy (async) + asyncpg + Pydantic v2
-  BackgroundTasks | WebSocket Manager | Groq LLM API
-        |
-        |  asyncpg + connection pooler (port 5432)
-        v
-DATABASE (Supabase)
-  PostgreSQL 15 | Session-mode connection pooler
+  _____ _           __  __ _           _     
+ |  ___(_)_   _____/  \/ /(_)_ __   __| |___ 
+ | |_  | \ \ / / _ \ /\/\ /| | '_ \ / _` / __|
+ |  _| | |\ V /  __/ |  | || | | | | (_| \__ \
+ |_|   |_| \_/ \___|_|  |_||_|_| |_|\__,_|___/
+```
+
+# FIVEMINDS
+
+### Five Agents. One Mind. Zero Manual Work.
+
+> Upload a CSV. Ask a business question. Get boardroom-ready insights in under 30 seconds.
+
+<br>
+
+[![Live App](https://img.shields.io/badge/LIVE%20APP-VISIT%20NOW-0066FF?style=for-the-badge&logoColor=white)](https://5ive-minds-two.vercel.app)
+[![API Docs](https://img.shields.io/badge/API-SWAGGER%20DOCS-7B2FBE?style=for-the-badge&logoColor=white)](https://5iveminds-production.up.railway.app/docs)
+[![Backend](https://img.shields.io/badge/BACKEND-RAILWAY-000000?style=for-the-badge&logoColor=white)](https://5iveminds-production.up.railway.app/health)
+[![License](https://img.shields.io/badge/LICENSE-MIT-22C55E?style=for-the-badge&logoColor=white)](LICENSE)
+[![Made With](https://img.shields.io/badge/MADE%20WITH-GROQ%20%2B%20FASTAPI-FF6B35?style=for-the-badge&logoColor=white)](https://console.groq.com)
+
+<br>
+
+</div>
+
+---
+
+<div align="center">
+
+## HOW IT WORKS
+
+**1. Upload** your CSV or Excel file
+&nbsp;&nbsp;&nbsp;**2. Ask** any business question
+&nbsp;&nbsp;&nbsp;**3. Watch** 5 AI agents collaborate live
+&nbsp;&nbsp;&nbsp;**4. Export** a boardroom-ready report
+
+</div>
+
+---
+
+## THE 5 AGENTS
+
+```
++------------------+-------------------------------------------------------+---------------------------+
+|      AGENT       |                        ROLE                          |          OUTPUT           |
++------------------+-------------------------------------------------------+---------------------------+
+|  Data Engineer   |  Schema inference, cleaning, imputation, outliers    |  Clean dataset + score    |
+|  Statistician    |  EDA, distributions, hypothesis tests, correlations  |  Statistical summary      |
+|  ML Engineer     |  AutoML x5 models, SHAP explainability               |  Best model + importance  |
+|  Strategist      |  Business insights, ROI analysis, recommendations    |  Action plan + ROI        |
+|  Designer        |  Report compilation and export generation            |  PDF / Excel / PPT / HTML |
++------------------+-------------------------------------------------------+---------------------------+
+```
+
+**Pipeline completes in under 30 seconds. Quality scored out of 100.**
+
+---
+
+## SCREENSHOTS
+
+| Pipeline Dashboard | Statistical Analysis |
+|--------------------|---------------------|
+| Live agent progress, quality scores, 5/5 agents tracked in real time | Distribution charts, correlation heatmap, hypothesis test results |
+
+| ML Results | Strategic Insights |
+|------------|-------------------|
+| Feature importance, 5-model AutoML comparison, SHAP summary | $1.35M ROI projection, churn reduction targets, prioritized recommendations |
+
+---
+
+## TECH STACK
+
+```
+FRONTEND                          BACKEND                           INFRA
+---------                         --------                          -----
+React 18 + Vite                   FastAPI (async)                   Vercel  (frontend)
+TypeScript                        SQLAlchemy 2.0                    Railway (backend)
+Tailwind CSS                      asyncpg                           Supabase (database)
+shadcn/ui + Radix UI              Pydantic v2                       Groq API (LLM)
+Zustand (state)                   WebSocket Manager
+Recharts (charts)                 BackgroundTasks
+Framer Motion                     PostgreSQL 15
+React Dropzone                    Llama 3 8B / 70B
 ```
 
 ---
 
-## Quick Start
+## ARCHITECTURE
+
+```
++-----------------------------------------------+
+|              FRONTEND  (Vercel)               |
+|  React 18 + Vite + TypeScript + Tailwind CSS  |
+|  Zustand | Recharts | Framer Motion           |
++------------------------+----------------------+
+                         |
+               HTTPS / WebSocket
+                         |
+                         v
++-----------------------------------------------+
+|              BACKEND  (Railway)               |
+|  FastAPI + SQLAlchemy + asyncpg + Pydantic    |
+|  BackgroundTasks | WebSocket | Groq LLM API  |
++------------------------+----------------------+
+                         |
+           asyncpg + connection pooler
+                  (port 5432)
+                         |
+                         v
++-----------------------------------------------+
+|            DATABASE  (Supabase)               |
+|     PostgreSQL 15 | Session-mode pooler       |
++-----------------------------------------------+
+```
+
+---
+
+## QUICK START
 
 ### Prerequisites
 
@@ -80,91 +127,104 @@ DATABASE (Supabase)
 - PostgreSQL 14+
 - [Groq API Key](https://console.groq.com)
 
-### 1. Clone
+---
+
+### Step 1 -- Clone
 
 ```bash
 git clone https://github.com/shivamim/FiveMinds.git
 cd FiveMinds
 ```
 
-### 2. Backend
+### Step 2 -- Backend
 
 ```bash
 cd backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# Fill in DATABASE_URL, GROQ_API_KEY, SECRET_KEY
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Frontend
+### Step 3 -- Frontend
 
 ```bash
 cd frontend
 npm install
 cp .env.example .env.local
+# Set VITE_API_URL=http://localhost:8000
 npm run dev
 ```
 
-### 4. Open
+### Step 4 -- Open
 
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:5173 |
-| API Docs | http://localhost:8000/docs |
-| Health | http://localhost:8000/health |
+```
+Frontend   ->  http://localhost:5173
+API Docs   ->  http://localhost:8000/docs
+Health     ->  http://localhost:8000/health
+```
 
 ---
 
-## Environment Variables
+## ENVIRONMENT VARIABLES
 
 ### Backend (Railway)
 
 ```env
-DATABASE_URL=postgresql://postgres.YOUR_REF:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
-GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
-FRONTEND_URL=https://5ive-minds-two.vercel.app
-CORS_ORIGINS_STR=https://5ive-minds-two.vercel.app,http://localhost:5173
-SECRET_KEY=your-random-32-char-string
-ENVIRONMENT=production
-VERSION=2.0.0
+DATABASE_URL        = postgresql://postgres.YOUR_REF:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+GROQ_API_KEY        = gsk_xxxxxxxxxxxxxxxxxxxx
+FRONTEND_URL        = https://5ive-minds-two.vercel.app
+CORS_ORIGINS_STR    = https://5ive-minds-two.vercel.app,http://localhost:5173
+SECRET_KEY          = your-random-32-char-string
+ENVIRONMENT         = production
+VERSION             = 2.0.0
 ```
 
-> Use Supabase port **5432** (session mode), NOT 6543. Port 6543 breaks asyncpg prepared statements.
+> [!WARNING]
+> Use Supabase port **5432** (session mode), NOT **6543** (transaction mode).
+> Port 6543 breaks asyncpg prepared statements.
 
 ### Frontend (Vercel)
 
 ```env
-VITE_API_URL=https://5iveminds-production.up.railway.app
+VITE_API_URL = https://5iveminds-production.up.railway.app
 ```
 
 ---
 
-## API Reference
+## API REFERENCE
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/docs` | GET | Swagger UI |
-| `/api/v1/datasets/upload` | POST | Upload CSV / Excel |
-| `/api/v1/datasets` | GET | List datasets |
-| `/api/v1/pipeline/run` | POST | Trigger pipeline |
-| `/api/v1/pipeline/{id}/status` | GET | Pipeline status |
-| `/api/v1/pipeline/{id}/results` | GET | Full results |
-| `/api/v1/pipeline/{id}/ws` | WS | Real-time updates |
-| `/api/v1/reports/generate` | POST | Generate export |
+```
+METHOD   ENDPOINT                          DESCRIPTION
+------   --------                          -----------
+GET      /health                           Health check
+GET      /docs                             Swagger UI
+POST     /api/v1/datasets/upload           Upload CSV or Excel
+GET      /api/v1/datasets                  List all datasets
+POST     /api/v1/pipeline/run              Trigger analysis pipeline
+GET      /api/v1/pipeline/{id}/status      Agent progress + status
+GET      /api/v1/pipeline/{id}/results     Full results payload
+GET      /api/v1/pipeline/{id}/logs        Agent execution logs
+WS       /api/v1/pipeline/{id}/ws          Real-time WebSocket updates
+POST     /api/v1/reports/generate          Generate export report
+```
 
 ---
 
-## Key Engineering Notes
+## KEY ENGINEERING DECISIONS
 
-### asyncpg + PgBouncer (Supabase)
+### Fix 1 -- asyncpg + PgBouncer (Supabase)
 
-Supabase transaction-mode pooler (port 6543) does not support asyncpg prepared statements. Fix:
+Supabase transaction-mode pooler (port 6543) does not support asyncpg prepared statements.
 
 ```python
+# backend/app/db/database.py
 create_async_engine(
     ASYNC_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
     connect_args={
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
@@ -173,49 +233,71 @@ create_async_engine(
 )
 ```
 
-### Background Task Session Lifecycle
+### Fix 2 -- Background Task Session Lifecycle
 
-FastAPI closes the request-scoped DB session before background tasks finish. Fix by passing a `session_maker` factory:
+FastAPI closes the request-scoped DB session before background tasks finish.
+Pass a `session_maker` factory instead of the live session.
 
 ```python
-session_maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
-background_tasks.add_task(service.execute_pipeline_with_session, run.id, ws_manager, session_maker)
+# backend/app/api/v1/pipeline.py
+session_maker = async_sessionmaker(
+    async_engine, class_=AsyncSession, expire_on_commit=False
+)
+background_tasks.add_task(
+    service.execute_pipeline_with_session, run.id, ws_manager, session_maker
+)
 ```
 
 ---
 
-## Roadmap
+## ROADMAP
 
-- [x] 5-agent pipeline with real LLM (Groq)
-- [x] AutoML - 5-model comparison + SHAP
-- [x] Real-time progress (WebSocket + polling)
-- [x] Export: PDF, Excel, PPT, HTML
-- [x] Dark / light mode + mobile-friendly UI
-- [x] Pipeline history
-- [ ] User authentication and multi-tenancy
-- [ ] Dataset preview and column editor
-- [ ] Custom agent configuration
-- [ ] Scheduled recurring analysis
-- [ ] Slack / Discord notifications
+```
+DONE                                    COMING SOON
+----                                    -----------
+[x] 5-agent AI pipeline (Groq LLM)     [ ] User authentication + multi-tenancy
+[x] AutoML - 5 models + SHAP           [ ] Dataset preview and column editor
+[x] Real-time WebSocket progress        [ ] Custom agent configuration
+[x] Export: PDF, Excel, PPT, HTML       [ ] Scheduled recurring analysis
+[x] Dark / light mode UI               [ ] Slack / Discord notifications
+[x] Full pipeline history              [ ] API key management for teams
+[x] Quality scoring engine
+[x] Mobile-friendly responsive UI
+```
 
 ---
 
-## Contributing
+## CONTRIBUTING
 
 ```bash
-git checkout -b feature/your-feature
-git commit -m "feat: add your feature"
-git push origin feature/your-feature
+# 1. Fork the repository
+# 2. Create your feature branch
+git checkout -b feature/amazing-feature
+
+# 3. Commit your changes
+git commit -m "feat: add amazing feature"
+
+# 4. Push and open a Pull Request
+git push origin feature/amazing-feature
 ```
 
-Then open a Pull Request.
+All contributions are welcome. Please follow conventional commits.
 
 ---
 
-## License
+## LICENSE
 
-MIT - see [LICENSE](LICENSE)
+Distributed under the **MIT License** - see [LICENSE](LICENSE) for details.
 
 ---
 
-Built by [Shivam Shukla](https://github.com/shivamim)
+<div align="center">
+
+```
+Built with obsession by Shivam Shukla
+https://github.com/shivamim
+```
+
+*Made with love by someone who breathes AI*
+
+</div>
