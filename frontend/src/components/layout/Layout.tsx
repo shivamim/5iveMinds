@@ -1,9 +1,10 @@
+import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { useStore } from '@/stores/appStore'
 import { cn } from '@/lib/utils'
 
-export function Layout({ children }: { children: React.ReactNode }) {
+export function Layout() {
   const { sidebarOpen } = useStore()
 
   return (
@@ -16,7 +17,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
       >
         <Header />
-        <main className="p-6">{children}</main>
+        <main className="p-6">
+          <Outlet />
+        </main>
       </div>
     </div>
   )
