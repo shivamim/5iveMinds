@@ -4,7 +4,6 @@ import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-// FIX: All imports are now at the top of the file (was at bottom causing syntax error)
 import { Lightbulb, Target, ListTodo, Shield, AlertTriangle, ShieldAlert, FileUp, BarChart3 } from 'lucide-react'
 
 export default function StrategyPage() {
@@ -18,7 +17,7 @@ export default function StrategyPage() {
 
     const loadData = async () => {
       const existing = getAgentOutput('strategist')
-      if (existing) return
+      if (existing && Object.keys(existing).length > 0) return
 
       setFetching(true)
       try {
@@ -35,9 +34,29 @@ export default function StrategyPage() {
     }
 
     loadData()
-  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+  }, [currentRun?.id])
 
-  const strategyOutput = getAgentOutput('strategist')
+  const strategyOutput = getAgentOutput('strategist') || {}
+
+  // CRITICAL FIX: Handle all possible data shapes from backend
+  const insights = strategyOutput.business_insights || []
+  const actions = strategyOutput.recommended_actions || []
+  const roi = strategyOutput.roi_projection || {}
+  const risks = strategyOutput.risk_matrix || []
+  const scenarios = strategyOutput.scenario_simulations || {}
+  const qualityScore = strategyOutput.quality_score
+  const executiveSummary = strategyOutput.executive_summary || ''
+
+  // Build SWOT from available data
+  const swot = strategyOutput.swot || {
+    strengths: insights.filter((i: string) => i.toLowerCase().includes('strong') || i.toLowerCase().includes('quality')),
+    weaknesses: insights.filter((i: string) => i.toLowerCase().includes('weak') || i.toLowerCase().includes('missing') || i.toLowerCase().includes('cleanup')),
+    opportunities: insights.filter((i: string) => i.toLowerCase().includes('opportunit') || i.toLowerCase().includes('predict') || i.toLowerCase().includes('feature')),
+    threats: risks.map((r: any) => r.risk)
+  }
+
+  // Check if we have meaningful data
+  const hasData = insights.length > 0 || actions.length > 0 || executiveSummary
 
   if (!currentRun) {
     return (
@@ -49,7 +68,7 @@ export default function StrategyPage() {
     )
   }
 
-  if (!strategyOutput) {
+  if (!hasData) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Lightbulb className="w-12 h-12 text-muted-foreground animate-pulse" />
@@ -63,21 +82,6 @@ export default function StrategyPage() {
     )
   }
 
-  const insights = strategyOutput.business_insights || []
-  const actions = strategyOutput.recommended_actions || []
-  const roi = strategyOutput.roi_projection || {}
-  const risks = strategyOutput.risk_matrix || []
-  const scenarios = strategyOutput.scenario_simulations || {}
-  const qualityScore = strategyOutput.quality_score
-
-  // Build SWOT from available data
-  const swot = strategyOutput.swot || {
-    strengths: insights.filter((i: string) => i.toLowerCase().includes('strong') || i.toLowerCase().includes('quality')),
-    weaknesses: insights.filter((i: string) => i.toLowerCase().includes('weak') || i.toLowerCase().includes('missing') || i.toLowerCase().includes('cleanup')),
-    opportunities: insights.filter((i: string) => i.toLowerCase().includes('opportunit') || i.toLowerCase().includes('predict') || i.toLowerCase().includes('feature')),
-    threats: risks.map((r: any) => r.risk)
-  }
-
   return (
     <div className="space-y-6">
       <div>
@@ -89,6 +93,15 @@ export default function StrategyPage() {
           Analysis for: {currentRun.dataset_name}
         </p>
       </div>
+
+      {executiveSummary && (
+        <Card className="border-l-4 border-l-primary">
+          <CardContent className="p-4">
+            <p className="text-sm font-medium text-muted-foreground mb-1">Executive Summary</p>
+            <p className="text-base leading-relaxed">{executiveSummary}</p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-4">
         <Badge variant="outline">{insights.length} insights</Badge>
@@ -117,7 +130,8 @@ export default function StrategyPage() {
             <CardContent>
               {insights.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No business insights generated.
+                  <Lightbulb className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No business insights generated.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -147,7 +161,8 @@ export default function StrategyPage() {
             <CardContent>
               {actions.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No recommended actions generated.
+                  <ListTodo className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No recommended actions generated.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -320,7 +335,8 @@ export default function StrategyPage() {
             <CardContent>
               {risks.length === 0 ? (
                 <div className="text-center py-4 text-muted-foreground">
-                  No risks identified.
+                  <ShieldAlert className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No risks identified.</p>
                 </div>
               ) : (
                 <div className="space-y-2">
