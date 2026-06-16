@@ -1,172 +1,228 @@
 import { useStore } from '@/stores/appStore'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { DistributionChart, CorrelationHeatmap } from '@/components/charts'
-import { FileQuestion } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { BarChart, Activity, FlaskConical, FileUp } from 'lucide-react'
 
-export function StatisticsPage() {
-  // FIXED: Read statistician output from store instead of hardcoded data
-  const getAgentOutput = useStore((s) => s.getAgentOutput)
-  const agentExecutions = useStore((s) => s.agentExecutions)
+export default function StatisticsPage() {
+  const { getAgentOutput, currentRun } = useStore()
+  
+  // CRITICAL: Read from the store, not hardcoded data
+  const statisticianOutput = getAgentOutput('statistician')
+  
+  if (!currentRun) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <FileUp className="w-12 h-12 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">No Pipeline Running</h2>
+        <p className="text-muted-foreground">Start an analysis from the Dashboard to see statistical results.</p>
+      </div>
+    )
+  }
 
-  const statOutput = getAgentOutput('statistician')
-  const execution = agentExecutions.find((e) => e.agent_name === 'statistician')
+  if (!statisticianOutput) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <Activity className="w-12 h-12 text-muted-foreground animate-pulse" />
+        <h2 className="text-xl font-semibold">Waiting for Statistician...</h2>
+        <p className="text-muted-foreground">The Statistician agent is analyzing distributions, correlations, and hypothesis tests.</p>
+      </div>
+    )
+  }
 
-  // Parse distribution data from agent output
-  const distData = statOutput?.distributions as
-    | Array<{ bin: string; count: number }>
-    | null
-  const corrData = statOutput?.correlations as
-    | Array<{ x: string; y: string; value: number }>
-    | null
-  const hypothesisTests = statOutput?.hypothesis_tests as
-    | Array<{
-        test: string
-        variables: string[]
-        p_value: number
-        significant: boolean
-      }>
-    | null
-  const summaryStats = statOutput?.summary_statistics as Record<
-    string,
-    unknown
-  > | null
+  const distributions = statisticianOutput.distributions || []
+  const correlations = statisticianOutput.correlations || []
+  const hypothesisTests = statisticianOutput.hypothesis_tests || []
+  const qualityScore = statisticianOutput.quality_score
+  const numericColumns = statisticianOutput.numeric_columns || 0
+  const significantCorrelations = statisticianOutput.significant_correlations || 0
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Statistical Analysis</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Statistical Analysis</h1>
         <p className="text-muted-foreground">
           EDA, distributions, hypothesis testing, and correlation analysis
         </p>
       </div>
 
-      {execution?.status === 'running' ? (
-        <Card>
-          <CardContent className="pt-6 text-center text-muted-foreground py-12">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            Running statistical analysis...
-          </CardContent>
-        </Card>
-      ) : statOutput ? (
-        <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {distData && distData.length > 0 ? (
-              <DistributionChart data={distData} />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Distribution</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <EmptyState message="No distribution data available from the statistician agent." />
-                </CardContent>
-              </Card>
-            )}
-            {corrData && corrData.length > 0 ? (
-              <CorrelationHeatmap data={corrData} />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Correlations</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <EmptyState message="No correlation data available from the statistician agent." />
-                </CardContent>
-              </Card>
-            )}
-          </div>
+      <div className="flex gap-2 mb-4">
+        <Badge variant="outline">{numericColumns} numeric columns</Badge>
+        <Badge variant="outline">{correlations.length} correlations</Badge>
+        <Badge variant={significantCorrelations > 0 ? 'default' : 'secondary'}>
+          {significantCorrelations} significant
+        </Badge>
+        <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
+      </div>
 
-          {hypothesisTests && hypothesisTests.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Hypothesis Test Results</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {hypothesisTests.map((test, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted"
-                    >
-                      <span className="font-medium">
-                        {test.test}: {test.variables?.join(' vs ')}
-                      </span>
-                      <span
-                        className={`font-mono ${
-                          test.significant ? 'text-emerald-500' : 'text-amber-500'
-                        }`}
-                      >
-                        p = {typeof test.p_value === 'number' ? test.p_value.toFixed(3) : test.p_value}{' '}
-                        {test.significant ? '(significant)' : '(not significant)'}
-                      </span>
+      <Tabs defaultValue="distribution" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="distribution">Distribution</TabsTrigger>
+          <TabsTrigger value="correlation">Correlation Matrix</TabsTrigger>
+          <TabsTrigger value="hypothesis">Hypothesis Tests</TabsTrigger>
+        </TabsList>
+
+        {/* Distribution Tab */}
+        <TabsContent value="distribution" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart className="h-5 w-5" />
+                Distribution Analysis
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {distributions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No distribution data available from the statistician agent.
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {distributions.map((dist: any, idx: number) => (
+                    <Card key={idx}>
+                      <CardContent className="p-4">
+                        <h4 className="font-semibold mb-2">{dist.column || `Column ${idx + 1}`}</h4>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Type:</span>
+                            <Badge variant="outline" className="capitalize">{dist.type || dist.distribution_type || 'unknown'}</Badge>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Mean:</span>
+                            <span>{dist.mean?.toFixed?.(3) ?? dist.mean ?? 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Std:</span>
+                            <span>{dist.std?.toFixed?.(3) ?? dist.std ?? 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Skewness:</span>
+                            <span>{dist.skewness?.toFixed?.(3) ?? dist.skewness ?? 'N/A'}</span>
+                          </div>
+                          {dist.normality_test && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Normal:</span>
+                              <Badge variant={dist.normality_test.p_value > 0.05 ? 'default' : 'secondary'}>
+                                p={dist.normality_test.p_value?.toFixed?.(4) ?? 'N/A'}
+                              </Badge>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Correlation Tab */}
+        <TabsContent value="correlation" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5" />
+                Correlation Matrix
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {correlations.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No correlations found in the dataset.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {correlations.map((corr: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{corr.var1}</span>
+                        <span className="text-muted-foreground">↔</span>
+                        <span className="font-medium">{corr.var2}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`font-bold ${
+                          Math.abs(corr.correlation) > 0.7 ? 'text-green-500' :
+                          Math.abs(corr.correlation) > 0.4 ? 'text-yellow-500' : 'text-muted-foreground'
+                        }`}>
+                          r = {corr.correlation?.toFixed?.(3) ?? corr.correlation}
+                        </span>
+                        {corr.p_value !== undefined && (
+                          <Badge variant={corr.p_value < 0.05 ? 'default' : 'secondary'}>
+                            p = {corr.p_value?.toFixed?.(4) ?? corr.p_value}
+                          </Badge>
+                        )}
+                        {corr.significant && (
+                          <Badge>Significant</Badge>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>Hypothesis Test Results</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <EmptyState message="No hypothesis tests were run by the statistician agent." />
-              </CardContent>
-            </Card>
-          )}
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          {summaryStats && Object.keys(summaryStats).length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Summary Statistics</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-3 px-4 font-medium">Column</th>
-                        {Object.keys(summaryStats[Object.keys(summaryStats)[0]] as Record<string, unknown> || {}).map((key) => (
-                          <th key={key} className="text-left py-3 px-4 font-medium capitalize">
-                            {key}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(summaryStats).map(([col, stats], i) => (
-                        <tr key={i} className="border-b last:border-0">
-                          <td className="py-3 px-4 font-mono">{col}</td>
-                          {Object.values(stats as Record<string, unknown>).map((val, j) => (
-                            <td key={j} className="py-3 px-4 font-mono">
-                              {typeof val === 'number' ? val.toFixed(2) : String(val)}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        {/* Hypothesis Tests Tab */}
+        <TabsContent value="hypothesis" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FlaskConical className="h-5 w-5" />
+                Hypothesis Test Results
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {hypothesisTests.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No hypothesis tests were run by the statistician agent.
                 </div>
-              </CardContent>
-            </Card>
-          ) : null}
-        </>
-      ) : (
-        <Card>
-          <CardContent className="pt-6">
-            <EmptyState message="Run a pipeline to see statistical analysis results. The Statistician agent will perform EDA, calculate correlations, and run hypothesis tests on your dataset." />
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  )
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-8">
-      <FileQuestion className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-50" />
-      <p className="text-muted-foreground max-w-md mx-auto">{message}</p>
+              ) : (
+                <div className="space-y-4">
+                  {hypothesisTests.map((test: any, idx: number) => (
+                    <Card key={idx} className="border-l-4 border-l-blue-500">
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-semibold">{test.name || test.test_name || `Test ${idx + 1}`}</h4>
+                          <Badge variant={test.rejected ? 'default' : 'secondary'}>
+                            {test.rejected ? 'Rejected' : 'Not Rejected'}
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Statistic:</span>{' '}
+                            <span className="font-medium">{test.statistic?.toFixed?.(4) ?? test.statistic ?? 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">p-value:</span>{' '}
+                            <span className="font-medium">{test.p_value?.toFixed?.(4) ?? test.p_value ?? 'N/A'}</span>
+                          </div>
+                          {test.degrees_of_freedom && (
+                            <div>
+                              <span className="text-muted-foreground">df:</span>{' '}
+                              <span>{test.degrees_of_freedom}</span>
+                            </div>
+                          )}
+                          {test.effect_size && (
+                            <div>
+                              <span className="text-muted-foreground">Effect Size:</span>{' '}
+                              <span>{test.effect_size?.toFixed?.(4) ?? test.effect_size}</span>
+                            </div>
+                          )}
+                        </div>
+                        {test.description && (
+                          <p className="mt-2 text-sm text-muted-foreground">{test.description}</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
