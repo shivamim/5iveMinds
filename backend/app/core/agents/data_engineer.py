@@ -103,6 +103,54 @@ class DataEngineerAgent(BaseAgent):
         # Determine best imputation method based on actual data
         imputation_method = self._determine_imputation(column_stats, data_types)
 
+        # CRITICAL FIX: Build frontend-compatible schema format
+        # Frontend expects: schema[col] = { type, null_pct, unique_count, sample_values }
+        frontend_schema = {}
+        for col in columns:
+            col_stat = column_stats.get(col, {})
+            col_type = data_types.get(col, "unknown")
+            null_pct_val = col_stat.get("null_pct", 0)
+            unique_val = col_stat.get("unique_count", 0)
+            # Build sample values from top_values if available
+            sample_values = []
+            top_values = col_stat.get("top_values", {})
+            if top_values:
+                sample_values = list(top_values.keys())[:3]
+            else:
+                # Fallback: use mean for numeric, mode for categorical
+                if col_type == "numeric" and col_stat.get("mean") is not None:
+                    sample_values = [round(col_stat["mean"], 2)]
+                elif col_stat.get("mode") is not None:
+                    sample_values = [col_stat["mode"]]
+                else:
+                    sample_values = [f"{col}_sample"]
+
+            frontend_schema[col] = {
+                "type": col_type,
+                "null_pct": null_pct_val,
+                "unique_count": unique_val,
+                "sample_values": sample_values,
+            }
+
+        # CRITICAL FIX: Build frontend-compatible imputation array
+        # Frontend expects: imputation[] = { column, strategy, filled_count }
+        frontend_imputation = []
+        if missing_pct > 0:
+            for col in columns:
+                col_stat = column_stats.get(col, {})
+                null_count = col_stat.get("null_count", 0)
+                if null_count > 0:
+                    col_type = data_types.get(col, "unknown")
+                    strategy = "median" if col_type == "numeric" else "mode"
+                    frontend_imputation.append({
+                        "column": col,
+                        "strategy": strategy,
+                        "filled_count": null_count,
+                    })
+        else:
+            # No imputation needed - include a positive entry
+            frontend_imputation = []
+
         result = {
             "quality_score": quality_score,
             "schema_inferred": True,
@@ -125,7 +173,11 @@ class DataEngineerAgent(BaseAgent):
                 "uniqueness": round(
                     sum(c["unique_count"] for c in column_quality) / sum(c["unique_count"] + c["null_count"] for c in column_quality) * 100, 2
                 ) if column_quality else 100,
-            }
+            },
+            # CRITICAL FIX: Frontend-compatible fields
+            "schema": frontend_schema,
+            "columns": columns,
+            "imputation": frontend_imputation,
         }
 
         self.board.post("data_quality", result)
