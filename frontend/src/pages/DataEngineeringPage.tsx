@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,16 +8,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Database, Wrench, AlertTriangle, FileUp } from 'lucide-react'
 
 export default function DataEngineeringPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
 
-  // CRITICAL FIX: Fetch data independently so this page works even if user
-  // navigates directly via URL or refreshes (without going through Dashboard first)
   useEffect(() => {
     if (!currentRun?.id) return
-
     const loadData = async () => {
-      // Only fetch if we don't already have data for this agent
       const existing = getAgentOutput('data_engineer')
       if (existing && Object.keys(existing).length > 0) return
 
@@ -34,25 +30,21 @@ export default function DataEngineeringPage() {
         setFetching(false)
       }
     }
-
     loadData()
-  }, [currentRun?.id])
+  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const dataEngineerOutput = getAgentOutput('data_engineer') || {}
+  const dataEngineerOutput = useMemo(() => getAgentOutput('data_engineer') || {}, [agentExecutions, getAgentOutput])
 
-  // CRITICAL FIX: Handle all possible data shapes from backend
-  // Backend now returns: schema, columns, imputation, outlier_details, quality_score
-  const schema = dataEngineerOutput.schema || {}
+  const schema = dataEngineerOutput.schema || dataEngineerOutput.inferred_schema || {}
   const columns = dataEngineerOutput.columns || Object.keys(schema)
-  const imputation = dataEngineerOutput.imputation || []
-  const outlierDetails = dataEngineerOutput.outlier_details || []
-  const qualityScore = dataEngineerOutput.quality_score ?? dataEngineerOutput.quality_checks?.completeness ?? null
+  const imputation = dataEngineerOutput.imputation || dataEngineerOutput.imputation_log || []
+  const outlierDetails = dataEngineerOutput.outlier_details || dataEngineerOutput.outliers || []
+  const qualityScore = dataEngineerOutput.quality_score ?? dataEngineerOutput.data_quality_score ?? null
   const rowCount = dataEngineerOutput.row_count ?? 0
   const columnCount = dataEngineerOutput.column_count ?? columns.length
   const missingValuesPct = dataEngineerOutput.missing_values_pct ?? 0
   const columnQuality = dataEngineerOutput.column_quality || []
 
-  // Check if we have any meaningful data
   const hasData = columns.length > 0 || Object.keys(schema).length > 0 || qualityScore !== null
 
   if (!currentRun) {
@@ -71,9 +63,7 @@ export default function DataEngineeringPage() {
         <Database className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Data Engineer...</h2>
         <p className="text-muted-foreground">
-          {fetching
-            ? 'Fetching results from server...'
-            : 'The Data Engineer agent is analyzing your dataset schema, quality, and outliers.'}
+          {fetching ? 'Fetching results from server...' : 'The Data Engineer agent is analyzing your dataset.'}
         </p>
       </div>
     )
@@ -83,9 +73,7 @@ export default function DataEngineeringPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Data Engineering</h1>
-        <p className="text-muted-foreground">
-          Schema inference, cleaning, imputation, and outlier detection
-        </p>
+        <p className="text-muted-foreground">Schema inference, cleaning, imputation, and outlier detection</p>
       </div>
 
       <Tabs defaultValue="schema" className="space-y-4">
@@ -95,7 +83,6 @@ export default function DataEngineeringPage() {
           <TabsTrigger value="outliers">Outliers</TabsTrigger>
         </TabsList>
 
-        {/* Schema Tab */}
         <TabsContent value="schema" className="space-y-4">
           <Card>
             <CardHeader>
@@ -119,8 +106,8 @@ export default function DataEngineeringPage() {
               {columns.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
                   <Database className="h-8 w-8 opacity-50" />
-                  <p>No schema information available.</p>
-                  <p className="text-xs">The Data Engineer agent may still be processing your dataset.</p>
+                  <p>Schema details are not available in this agent output.</p>
+                  <p className="text-xs">The agent reported quality score {qualityScore} but did not return column-level schema metadata.</p>
                 </div>
               ) : (
                 <Table>
@@ -162,7 +149,6 @@ export default function DataEngineeringPage() {
           </Card>
         </TabsContent>
 
-        {/* Imputation Tab */}
         <TabsContent value="imputation" className="space-y-4">
           <Card>
             <CardHeader>
@@ -190,9 +176,9 @@ export default function DataEngineeringPage() {
                   <TableBody>
                     {imputation.map((item: any, idx: number) => (
                       <TableRow key={idx}>
-                        <TableCell className="font-medium">{item.column}</TableCell>
+                        <TableCell className="font-medium">{item.column || item.col || '—'}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize">{item.strategy}</Badge>
+                          <Badge variant="outline" className="capitalize">{item.strategy || item.method || '—'}</Badge>
                         </TableCell>
                         <TableCell>{item.filled_count || item.count || 0}</TableCell>
                       </TableRow>
@@ -204,7 +190,6 @@ export default function DataEngineeringPage() {
           </Card>
         </TabsContent>
 
-        {/* Outliers Tab */}
         <TabsContent value="outliers" className="space-y-4">
           <Card>
             <CardHeader>
@@ -227,26 +212,20 @@ export default function DataEngineeringPage() {
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start">
                           <div>
-                            <h4 className="font-semibold">{detail.column}</h4>
+                            <h4 className="font-semibold">{detail.column || detail.col || '—'}</h4>
                             <p className="text-sm text-muted-foreground">
                               {detail.count || detail.outlier_count || 0} outliers detected
                             </p>
                           </div>
-                          <Badge variant="outline">
-                            Method: {detail.method || 'IQR'}
-                          </Badge>
+                          <Badge variant="outline">Method: {detail.method || 'IQR'}</Badge>
                         </div>
                         {detail.values && (
                           <div className="mt-2 text-xs text-muted-foreground bg-muted p-2 rounded">
-                            Values: {Array.isArray(detail.values)
-                              ? detail.values.slice(0, 10).join(', ')
-                              : detail.values}
+                            Values: {Array.isArray(detail.values) ? detail.values.slice(0, 10).join(', ') : detail.values}
                           </div>
                         )}
                         {detail.note && (
-                          <p className="mt-2 text-xs text-muted-foreground bg-muted p-2 rounded">
-                            {detail.note}
-                          </p>
+                          <p className="mt-2 text-xs text-muted-foreground bg-muted p-2 rounded">{detail.note}</p>
                         )}
                       </CardContent>
                     </Card>
