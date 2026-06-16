@@ -31,162 +31,233 @@ interface RunStatus {
 export function DashboardPage() {
   const currentRun = useStore((s) => s.currentRun)
   const setCurrentRun = useStore((s) => s.setCurrentRun)
+  const setAgentExecutions = useStore((s) => s.setAgentExecutions)
   const [status, setStatus] = useState<RunStatus | null>(null)
   const [wsConnected, setWsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const currentRunRef = useRef<PipelineRun | null>(null)
-
   currentRunRef.current = currentRun
 
-  const fetchStatus = useCallback(async (runId: string) => {
-    try {
-      const res = await pipelineApi.getStatus(runId)
-      setStatus(res.data)
-      if (res.data?.run && currentRunRef.current) {
-        setCurrentRun({
-          ...currentRunRef.current,
-          status: res.data.run.status as PipelineRun['status'],
-          total_time_ms: res.data.run.total_time_ms,
-          quality_score_avg: res.data.run.quality_score_avg,
-        })
+  const fetchStatus = useCallback(
+    async (runId: string) => {
+      try {
+        const res = await pipelineApi.getStatus(runId)
+        setStatus(res.data)
+        // FIXED: Save agent executions to the store so tab pages can display real data
+        if (res.data?.executions) {
+          setAgentExecutions(res.data.executions)
+        }
+        if (res.data?.run && currentRunRef.current) {
+          setCurrentRun({
+            ...currentRunRef.current,
+            status: res.data.run.status as PipelineRun['status'],
+            total_time_ms: res.data.run.total_time_ms,
+            quality_score_avg: res.data.run.quality_score_avg,
+          })
+        }
+        setError(null)
+      } catch (e: any) {
+        console.error('Status poll error:', e)
+        if (e.response?.status === 404) {
+          setError('Pipeline run not found. It may have been deleted.')
+        }
       }
-      setError(null)
-    } catch (e: any) {
-      console.error('Status poll error:', e)
-      if (e.response?.status === 404) {
-        setError('Pipeline run not found. It may have been deleted.')
-      }
-    }
-  }, [setCurrentRun])
+    },
+    [setCurrentRun, setAgentExecutions]
+  )
 
+  // WebSocket connection
   useEffect(() => {
     if (!currentRun?.id) return
     const runId = currentRun.id
+    const wsUrl = getPipelineWsUrl(runId)
+    console.log('Connecting to WebSocket:', wsUrl)
 
-    setError(null)
-    setStatus(null)
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
 
+    ws.onopen = () => {
+      console.log('WebSocket connected')
+      setWsConnected(true)
+      // Send initial ping to verify connection
+      ws.send(JSON.stringify({ action: 'ping' }))
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        if (msg.type === 'pong') return
+        console.log('WebSocket message:', msg)
+
+        if (msg.type === 'agent_completed' || msg.type === 'agent_progress' || msg.type === 'agent_failed') {
+          fetchStatus(runId)
+        }
+        if (msg.type === 'pipeline_completed') {
+          fetchStatus(runId)
+        }
+      } catch (err) {
+        console.error('WebSocket message parse error:', err)
+      }
+    }
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected')
+      setWsConnected(false)
+    }
+
+    ws.onerror = (err) => {
+      console.error('WebSocket error:', err)
+      setWsConnected(false)
+    }
+
+    // Fallback polling every 3 seconds
+    const pollInterval = setInterval(() => {
+      fetchStatus(runId)
+    }, 3000)
+
+    // Initial fetch
     fetchStatus(runId)
 
-    const poll = setInterval(() => fetchStatus(runId), 2000)
-
-    let socket: WebSocket | null = null
-    try {
-      const wsUrl = getPipelineWsUrl(runId)
-      socket = new WebSocket(wsUrl)
-
-      socket.onopen = () => {
-        console.log('WebSocket connected')
-        setWsConnected(true)
-      }
-
-      socket.onmessage = () => {
-        fetchStatus(runId)
-      }
-
-      socket.onerror = () => {
-        console.log('WS unavailable — polling only')
-        setWsConnected(false)
-      }
-
-      socket.onclose = () => {
-        setWsConnected(false)
-      }
-
-      wsRef.current = socket
-    } catch (e) {
-      console.error('Failed to create WebSocket:', e)
-    }
-
     return () => {
-      clearInterval(poll)
-      if (wsRef.current) {
-        wsRef.current.close()
-        wsRef.current = null
-      }
+      clearInterval(pollInterval)
+      ws.close()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRun?.id, fetchStatus])
 
   if (!currentRun) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-        <Activity className="h-16 w-16 text-muted-foreground mb-4" />
-        <h2 className="text-2xl font-bold mb-2">No Active Pipeline</h2>
-        <p className="text-muted-foreground">
-          Start a new analysis from the home page
-        </p>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">Monitor your pipeline runs in real-time</p>
+        </div>
+        <Card>
+          <CardContent className="pt-6 text-center text-muted-foreground">
+            No active pipeline run. Go to the home page to start an analysis.
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
-  const run = status?.run || currentRun
-  const executions = status?.executions || []
-  const completedExecutions = executions.filter(e => e.status === 'completed').length
+  const executions = status?.executions ?? []
   const totalExecutions = executions.length || 5
+  const completedExecutions = executions.filter((e) => e.status === 'completed').length
   const progressPercent = Math.round((completedExecutions / totalExecutions) * 100)
+  const isCompleted = currentRun.status === 'completed'
+  const isFailed = currentRun.status === 'failed'
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Pipeline Dashboard</h1>
-          {wsConnected && (
-            <Badge variant="outline" className="text-emerald-500 border-emerald-500/30">
-              Live
-            </Badge>
-          )}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Pipeline run for {currentRun.dataset_name}
+          </p>
         </div>
-        <p className="text-muted-foreground mt-1">{run.business_question}</p>
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          <span className="text-sm text-muted-foreground">
+            {wsConnected ? 'Live' : 'Polling'}
+          </span>
+        </div>
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-4 rounded-lg border border-red-500/30 bg-red-500/5 text-red-500">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <p className="text-sm">{error}</p>
+        <div className="flex items-center gap-2 p-4 rounded-lg bg-red-500/10 text-red-500">
+          <AlertCircle className="h-4 w-4" />
+          <span className="text-sm">{error}</span>
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Status</p>
-                <p className="text-2xl font-bold capitalize">{run.status}</p>
-              </div>
-              <Clock className="h-8 w-8 text-muted-foreground" />
-            </div>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Status</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <Badge
+              variant={
+                isCompleted
+                  ? 'default'
+                  : isFailed
+                    ? 'destructive'
+                    : currentRun.status === 'running'
+                      ? 'secondary'
+                      : 'outline'
+              }
+              className="text-lg px-3 py-1"
+            >
+              {currentRun.status}
+            </Badge>
+            {currentRun.started_at && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Started: {new Date(currentRun.started_at).toLocaleString()}
+              </p>
+            )}
           </CardContent>
         </Card>
+
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Duration</p>
-                <p className="text-2xl font-bold">
-                  {run.total_time_ms ? formatDuration(run.total_time_ms) : 'In progress'}
-                </p>
-              </div>
-              <TrendingUp className="h-8 w-8 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Duration</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {currentRun.total_time_ms
+                ? formatDuration(currentRun.total_time_ms)
+                : isCompleted
+                  ? 'Done'
+                  : 'Running...'}
             </div>
+            {currentRun.completed_at && currentRun.started_at && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {new Date(currentRun.started_at).toLocaleTimeString()} -{' '}
+                {new Date(currentRun.completed_at).toLocaleTimeString()}
+              </p>
+            )}
           </CardContent>
         </Card>
+
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Quality Score</p>
-                <p className={`text-2xl font-bold ${getQualityColor(run.quality_score_avg || 0)}`}>
-                  {run.quality_score_avg ? `${Math.round(run.quality_score_avg)}/100` : 'N/A'}
-                </p>
-              </div>
-              <Award className="h-8 w-8 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Quality Score</CardTitle>
+            <Award className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {currentRun.quality_score_avg
+                ? `${(currentRun.quality_score_avg * 100).toFixed(0)}%`
+                : '—'}
             </div>
+            {currentRun.quality_score_avg && (
+              <div className="flex items-center gap-1 mt-1">
+                <TrendingUp className={`h-3 w-3 ${getQualityColor(currentRun.quality_score_avg)}`} />
+                <span className={`text-xs ${getQualityColor(currentRun.quality_score_avg)}`}>
+                  {currentRun.quality_score_avg >= 0.8
+                    ? 'Excellent'
+                    : currentRun.quality_score_avg >= 0.6
+                      ? 'Good'
+                      : 'Needs Improvement'}
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Business Question</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm">{currentRun.business_question}</p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -195,7 +266,9 @@ export function DashboardPage() {
         <CardContent>
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{completedExecutions} of {totalExecutions} agents completed</span>
+              <span className="text-sm font-medium">
+                {completedExecutions} of {totalExecutions} agents completed
+              </span>
               <span className="text-sm text-muted-foreground">{progressPercent}%</span>
             </div>
             <Progress value={progressPercent} className="h-2" />
@@ -223,21 +296,30 @@ export function DashboardPage() {
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
-                      <div className={`
-                        w-3 h-3 rounded-full
-                        ${execution.status === 'completed' ? 'bg-emerald-500' :
-                          execution.status === 'running' ? 'bg-blue-500 animate-pulse' :
-                          execution.status === 'failed' ? 'bg-red-500' :
-                          'bg-muted'}
-                      `} />
+                      <div
+                        className={`w-3 h-3 rounded-full ${
+                          execution.status === 'completed'
+                            ? 'bg-emerald-500'
+                            : execution.status === 'running'
+                              ? 'bg-blue-500 animate-pulse'
+                              : execution.status === 'failed'
+                                ? 'bg-red-500'
+                                : 'bg-muted'
+                        }`}
+                      />
                       <span className="font-medium">{execution.agent_name}</span>
                     </div>
-                    <Badge variant={
-                      execution.status === 'completed' ? 'default' :
-                      execution.status === 'running' ? 'secondary' :
-                      execution.status === 'failed' ? 'destructive' :
-                      'outline'
-                    }>
+                    <Badge
+                      variant={
+                        execution.status === 'completed'
+                          ? 'default'
+                          : execution.status === 'running'
+                            ? 'secondary'
+                            : execution.status === 'failed'
+                              ? 'destructive'
+                              : 'outline'
+                      }
+                    >
                       {execution.status}
                     </Badge>
                   </div>
