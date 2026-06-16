@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from uuid import UUID
 
+
 # Pipeline schemas
 class PipelineRunCreate(BaseModel):
     dataset_id: UUID
@@ -10,9 +11,12 @@ class PipelineRunCreate(BaseModel):
     hitl_agents: Optional[List[str]] = []
     custom_config: Optional[Dict[str, Any]] = {}
 
+
 class PipelineRunResponse(BaseModel):
     id: UUID
     status: str
+    # FIXED: Added dataset_id so frontend knows which dataset was used
+    dataset_id: Optional[str] = None
     dataset_name: str
     business_question: str
     started_at: Optional[datetime]
@@ -23,6 +27,7 @@ class PipelineRunResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class AgentExecutionResponse(BaseModel):
     id: UUID
@@ -38,10 +43,12 @@ class AgentExecutionResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class PipelineStatusResponse(BaseModel):
     run: PipelineRunResponse
     executions: List[AgentExecutionResponse]
     progress_percent: float
+
 
 # Dataset schemas
 class DatasetUploadResponse(BaseModel):
@@ -53,11 +60,13 @@ class DatasetUploadResponse(BaseModel):
     dataset_schema: Dict[str, Any]
     uploaded_at: datetime
 
+
 class DatasetPreview(BaseModel):
     columns: List[str]
     rows: List[Dict[str, Any]]
     total_rows: int
     sample_size: int
+
 
 # Report schemas
 class ReportResponse(BaseModel):
@@ -66,9 +75,11 @@ class ReportResponse(BaseModel):
     content: str
     generated_at: datetime
 
+
 class ExportRequest(BaseModel):
     format: Literal["pdf", "excel", "pptx", "html"]
     sections: Optional[List[str]] = ["all"]
+
 
 # Chart schemas
 class ChartResponse(BaseModel):
@@ -78,6 +89,7 @@ class ChartResponse(BaseModel):
     chart_data: Dict[str, Any]
     plotly_spec: Optional[Dict[str, Any]]
 
+
 # Agent schemas
 class AgentInfo(BaseModel):
     name: str
@@ -86,13 +98,21 @@ class AgentInfo(BaseModel):
     capabilities: List[str]
     quality_dimensions: List[str]
 
+
 class AgentConfig(BaseModel):
     name: str
     config: Dict[str, Any]
 
+
 # WebSocket messages
 class PipelineProgressMessage(BaseModel):
-    type: Literal["agent_started", "agent_progress", "agent_completed", "agent_failed", "pipeline_completed"]
+    type: Literal[
+        "agent_started",
+        "agent_progress",
+        "agent_completed",
+        "agent_failed",
+        "pipeline_completed",
+    ]
     run_id: UUID
     agent_name: Optional[str]
     progress: Optional[float]
@@ -100,15 +120,18 @@ class PipelineProgressMessage(BaseModel):
     message: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+
 # Auth schemas
 class UserLogin(BaseModel):
     email: str
     password: str
 
+
 class UserRegister(BaseModel):
     email: str
     password: str
     name: str
+
 
 class TokenResponse(BaseModel):
     access_token: str
