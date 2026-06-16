@@ -1,203 +1,136 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useStore } from '@/stores/appStore'
-import type { PipelineRun } from '@/types'
-import { pipelineApi, getPipelineWsUrl } from '@/lib/api'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { pipelineApi } from '@/services/api'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { motion } from 'framer-motion'
-import { Clock, TrendingUp, Award, Activity, AlertCircle } from 'lucide-react'
-import { formatDuration, getQualityColor } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { 
+  Activity, Clock, BarChart3, ArrowRight, CheckCircle2, 
+  XCircle, Loader2, AlertCircle 
+} from 'lucide-react'
+import { Link } from 'react-router-dom'
 
-interface Execution {
-  id: string
-  agent_name: string
-  status: string
-  execution_time_ms: number
-  output_data?: Record<string, unknown>
-}
-
-interface RunStatus {
-  run: {
-    id: string
-    status: string
-    business_question: string
-    total_time_ms: number
-    quality_score_avg: number
-  }
-  executions: Execution[]
-}
-
-export function DashboardPage() {
-  const currentRun = useStore((s) => s.currentRun)
-  const setCurrentRun = useStore((s) => s.setCurrentRun)
-  const setAgentExecutions = useStore((s) => s.setAgentExecutions)
-  const [status, setStatus] = useState<RunStatus | null>(null)
-  const [wsConnected, setWsConnected] = useState(false)
+export default function DashboardPage() {
+  const { 
+    currentRun, 
+    setCurrentRun, 
+    setAgentExecutions,  // CRITICAL: This must be called to populate the store
+    theme 
+  } = useStore()
+  
+  const [status, setStatus] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
-  const currentRunRef = useRef<PipelineRun | null>(null)
-  currentRunRef.current = currentRun
+  const intervalRef = useRef<<ReturnType<<typeof setInterval> | null>(null)
 
-  const fetchStatus = useCallback(
-    async (runId: string) => {
-      try {
-        const res = await pipelineApi.getStatus(runId)
-        setStatus(res.data)
-        // FIXED: Save agent executions to the store so tab pages can display real data
-        if (res.data?.executions) {
-          setAgentExecutions(res.data.executions)
-        }
-        if (res.data?.run && currentRunRef.current) {
-          setCurrentRun({
-            ...currentRunRef.current,
-            status: res.data.run.status as PipelineRun['status'],
-            total_time_ms: res.data.run.total_time_ms,
-            quality_score_avg: res.data.run.quality_score_avg,
-          })
-        }
-        setError(null)
-      } catch (e: any) {
-        console.error('Status poll error:', e)
-        if (e.response?.status === 404) {
-          setError('Pipeline run not found. It may have been deleted.')
+  // Fetch pipeline status
+  const fetchStatus = async () => {
+    if (!currentRun?.id) return
+    
+    try {
+      const res = await pipelineApi.getStatus(currentRun.id)
+      setStatus(res.data)
+      
+      // CRITICAL FIX: Save agent executions to the global store
+      // so that DataEngineeringPage, StatisticsPage, MLResultsPage, 
+      // ReportPage, and StrategyPage can access them via getAgentOutput()
+      if (res.data?.executions && Array.isArray(res.data.executions)) {
+        setAgentExecutions(res.data.executions)
+      }
+      
+      // Update currentRun if completed
+      if (res.data?.status === 'completed' || res.data?.status === 'failed') {
+        setCurrentRun({
+          ...currentRun,
+          status: res.data.status,
+          quality_score_avg: res.data.quality_score_avg,
+          completed_at: res.data.completed_at,
+        })
+        
+        // Stop polling when done
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
         }
       }
-    },
-    [setCurrentRun, setAgentExecutions]
-  )
+    } catch (err: any) {
+      console.error('Failed to fetch status:', err)
+      setError(err.message || 'Failed to fetch pipeline status')
+    }
+  }
 
-  // WebSocket connection
+  // Start polling when currentRun changes
   useEffect(() => {
     if (!currentRun?.id) return
-    const runId = currentRun.id
-    const wsUrl = getPipelineWsUrl(runId)
-    console.log('Connecting to WebSocket:', wsUrl)
-
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      console.log('WebSocket connected')
-      setWsConnected(true)
-      // Send initial ping to verify connection
-      ws.send(JSON.stringify({ action: 'ping' }))
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data)
-        if (msg.type === 'pong') return
-        console.log('WebSocket message:', msg)
-
-        if (msg.type === 'agent_completed' || msg.type === 'agent_progress' || msg.type === 'agent_failed') {
-          fetchStatus(runId)
-        }
-        if (msg.type === 'pipeline_completed') {
-          fetchStatus(runId)
-        }
-      } catch (err) {
-        console.error('WebSocket message parse error:', err)
+    
+    setLoading(true)
+    setError(null)
+    
+    // Fetch immediately
+    fetchStatus()
+    
+    // Then poll every 3 seconds
+    intervalRef.current = setInterval(fetchStatus, 3000)
+    
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
       }
     }
-
-    ws.onclose = () => {
-      console.log('WebSocket disconnected')
-      setWsConnected(false)
-    }
-
-    ws.onerror = (err) => {
-      console.error('WebSocket error:', err)
-      setWsConnected(false)
-    }
-
-    // Fallback polling every 3 seconds
-    const pollInterval = setInterval(() => {
-      fetchStatus(runId)
-    }, 3000)
-
-    // Initial fetch
-    fetchStatus(runId)
-
-    return () => {
-      clearInterval(pollInterval)
-      ws.close()
-    }
-  }, [currentRun?.id, fetchStatus])
+  }, [currentRun?.id])
 
   if (!currentRun) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Monitor your pipeline runs in real-time</p>
-        </div>
-        <Card>
-          <CardContent className="pt-6 text-center text-muted-foreground">
-            No active pipeline run. Go to the home page to start an analysis.
-          </CardContent>
-        </Card>
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <AlertCircle className="w-12 h-12 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">No Active Pipeline</h2>
+        <p className="text-muted-foreground">Upload a dataset and start an analysis to see results here.</p>
+        <Button asChild>
+          <Link to="/">Start New Analysis</Link>
+        </Button>
       </div>
     )
   }
 
-  const executions = status?.executions ?? []
-  const totalExecutions = executions.length || 5
-  const completedExecutions = executions.filter((e) => e.status === 'completed').length
-  const progressPercent = Math.round((completedExecutions / totalExecutions) * 100)
-  const isCompleted = currentRun.status === 'completed'
-  const isFailed = currentRun.status === 'failed'
+  const isCompleted = status?.status === 'completed'
+  const isFailed = status?.status === 'failed'
+  const isRunning = status?.status === 'running' || status?.status === 'queued'
+  const executions = status?.executions || []
+  const completedAgents = executions.filter((e: any) => e.status === 'completed').length
+  const totalAgents = executions.length || 5
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
             Pipeline run for {currentRun.dataset_name}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          <span className="text-sm text-muted-foreground">
-            {wsConnected ? 'Live' : 'Polling'}
-          </span>
-        </div>
+        <Badge variant={isCompleted ? 'default' : isFailed ? 'destructive' : 'secondary'}>
+          {status?.status || 'loading'}
+        </Badge>
       </div>
 
-      {error && (
-        <div className="flex items-center gap-2 p-4 rounded-lg bg-red-500/10 text-red-500">
-          <AlertCircle className="h-4 w-4" />
-          <span className="text-sm">{error}</span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Stats Cards */}
+      <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Status</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <Badge
-              variant={
-                isCompleted
-                  ? 'default'
-                  : isFailed
-                    ? 'destructive'
-                    : currentRun.status === 'running'
-                      ? 'secondary'
-                      : 'outline'
-              }
-              className="text-lg px-3 py-1"
-            >
-              {currentRun.status}
-            </Badge>
-            {currentRun.started_at && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Started: {new Date(currentRun.started_at).toLocaleString()}
-              </p>
-            )}
+            <div className="flex items-center gap-2">
+              {isCompleted && <CheckCircle2 className="h-5 w-5 text-green-500" />}
+              {isFailed && <XCircle className="h-5 w-5 text-red-500" />}
+              {isRunning && <Loader2 className="h-5 w-5 animate-spin text-blue-500" />}
+              <span className="text-2xl font-bold">{status?.status || '...'}</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Started: {currentRun.started_at ? new Date(currentRun.started_at).toLocaleString() : 'N/A'}
+            </p>
           </CardContent>
         </Card>
 
@@ -208,139 +141,140 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {currentRun.total_time_ms
-                ? formatDuration(currentRun.total_time_ms)
-                : isCompleted
-                  ? 'Done'
-                  : 'Running...'}
+              {status?.total_time_ms 
+                ? `${(status.total_time_ms / 1000).toFixed(1)}s` 
+                : '...'}
             </div>
-            {currentRun.completed_at && currentRun.started_at && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {new Date(currentRun.started_at).toLocaleTimeString()} -{' '}
-                {new Date(currentRun.completed_at).toLocaleTimeString()}
-              </p>
-            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Quality Score</CardTitle>
-            <Award className="h-4 w-4 text-muted-foreground" />
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {currentRun.quality_score_avg
-                ? `${(currentRun.quality_score_avg * 100).toFixed(0)}%`
-                : '—'}
+              {status?.quality_score_avg 
+                ? `${Math.round(status.quality_score_avg)}%` 
+                : '...'}
             </div>
-            {currentRun.quality_score_avg && (
-              <div className="flex items-center gap-1 mt-1">
-                <TrendingUp className={`h-3 w-3 ${getQualityColor(currentRun.quality_score_avg)}`} />
-                <span className={`text-xs ${getQualityColor(currentRun.quality_score_avg)}`}>
-                  {currentRun.quality_score_avg >= 0.8
-                    ? 'Excellent'
-                    : currentRun.quality_score_avg >= 0.6
-                      ? 'Good'
-                      : 'Needs Improvement'}
-                </span>
-              </div>
+            {status?.quality_score_avg && (
+              <p className="text-xs text-green-500 mt-1">
+                {status.quality_score_avg >= 90 ? 'Excellent' : 
+                 status.quality_score_avg >= 75 ? 'Good' : 'Fair'}
+              </p>
             )}
           </CardContent>
         </Card>
       </div>
 
+      {/* Business Question */}
       <Card>
         <CardHeader>
-          <CardTitle>Business Question</CardTitle>
+          <CardTitle className="text-base">Business Question</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm">{currentRun.business_question}</p>
+          <p className="text-muted-foreground">{currentRun.business_question || 'N/A'}</p>
         </CardContent>
       </Card>
 
+      {/* Pipeline Progress */}
       <Card>
         <CardHeader>
-          <CardTitle>Pipeline Progress</CardTitle>
+          <CardTitle className="text-base">Pipeline Progress</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">
-                {completedExecutions} of {totalExecutions} agents completed
-              </span>
-              <span className="text-sm text-muted-foreground">{progressPercent}%</span>
-            </div>
-            <Progress value={progressPercent} className="h-2" />
+        <CardContent className="space-y-4">
+          <div className="flex justify-between text-sm">
+            <span>{completedAgents} of {totalAgents} agents completed</span>
+            <span>{Math.round((completedAgents / totalAgents) * 100)}%</span>
           </div>
+          <Progress value={(completedAgents / totalAgents) * 100} />
         </CardContent>
       </Card>
 
+      {/* Agent Executions */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold">Agent Executions</h2>
         {executions.length === 0 ? (
           <Card>
-            <CardContent className="pt-6 text-center text-muted-foreground">
+            <CardContent className="py-8 text-center text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
               Waiting for agents to start...
             </CardContent>
           </Card>
         ) : (
-          executions.map((execution, i) => (
-            <motion.div
-              key={execution.id}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.1 }}
-            >
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-3 h-3 rounded-full ${
-                          execution.status === 'completed'
-                            ? 'bg-emerald-500'
-                            : execution.status === 'running'
-                              ? 'bg-blue-500 animate-pulse'
-                              : execution.status === 'failed'
-                                ? 'bg-red-500'
-                                : 'bg-muted'
-                        }`}
-                      />
-                      <span className="font-medium">{execution.agent_name}</span>
-                    </div>
-                    <Badge
-                      variant={
-                        execution.status === 'completed'
-                          ? 'default'
-                          : execution.status === 'running'
-                            ? 'secondary'
-                            : execution.status === 'failed'
-                              ? 'destructive'
-                              : 'outline'
-                      }
-                    >
-                      {execution.status}
-                    </Badge>
+          executions.map((execution: any) => (
+            <Card key={execution.id} className="overflow-hidden">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {execution.status === 'completed' && (
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    )}
+                    {execution.status === 'failed' && (
+                      <XCircle className="h-4 w-4 text-red-500" />
+                    )}
+                    {execution.status === 'running' && (
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    )}
+                    <span className="font-medium capitalize">{execution.agent_name}</span>
                   </div>
-                  {execution.output_data && (
-                    <p className="text-sm text-muted-foreground ml-6">
-                      {typeof execution.output_data === 'string'
-                        ? execution.output_data
-                        : JSON.stringify(execution.output_data).substring(0, 200)}
-                    </p>
-                  )}
-                  {execution.execution_time_ms > 0 && (
-                    <p className="text-xs text-muted-foreground ml-6 mt-1">
-                      Duration: {formatDuration(execution.execution_time_ms)}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
+                  <Badge variant={
+                    execution.status === 'completed' ? 'default' :
+                    execution.status === 'failed' ? 'destructive' : 'secondary'
+                  }>
+                    {execution.status}
+                  </Badge>
+                </div>
+                
+                {execution.output_data && (
+                  <div className="mt-2 text-sm text-muted-foreground bg-muted p-2 rounded overflow-x-auto">
+                    <pre className="text-xs whitespace-pre-wrap break-all">
+                      {JSON.stringify(execution.output_data).slice(0, 500)}
+                      {JSON.stringify(execution.output_data).length > 500 ? '...' : ''}
+                    </pre>
+                  </div>
+                )}
+                
+                {execution.error_message && (
+                  <div className="mt-2 text-sm text-red-500 bg-red-50 dark:bg-red-950 p-2 rounded">
+                    {execution.error_message}
+                  </div>
+                )}
+                
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Duration: {execution.execution_time_ms 
+                    ? `${(execution.execution_time_ms / 1000).toFixed(1)}s` 
+                    : 'N/A'}
+                  {execution.quality_score && ` | Quality: ${execution.quality_score}`}
+                </div>
+              </CardContent>
+            </Card>
           ))
         )}
       </div>
+
+      {/* Navigation to Results */}
+      {isCompleted && (
+        <div className="flex gap-4">
+          <Button asChild className="flex-1">
+            <Link to="/data-engineering">
+              View Data Engineering <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+          <Button asChild className="flex-1" variant="outline">
+            <Link to="/statistics">
+              View Statistics <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+          <Button asChild className="flex-1" variant="outline">
+            <Link to="/ml-results">
+              View ML Results <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
