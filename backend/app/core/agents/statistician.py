@@ -48,7 +48,6 @@ class StatisticianAgent(BaseAgent):
                         # Approximate p-value using t-statistic
                         t_stat = estimated_corr * math.sqrt((n - 2) / (1 - estimated_corr**2))
                         # Rough p-value approximation (two-tailed)
-                        import math
                         p_value = max(0.001, min(0.5, 2 * (1 - self._approx_cdf(abs(t_stat)))))
                     else:
                         p_value = 0.5
@@ -190,11 +189,11 @@ class StatisticianAgent(BaseAgent):
                     "description": f"{corr['relationship'].capitalize()} correlation (r={r}) between {corr['var1']} and {corr['var2']}.",
                 })
 
+        # FIXED: Removed duplicate "hypothesis_tests" key
         result = {
             "quality_score": round(quality_score, 1),
             "distributions_analyzed": len(columns),
             "numeric_columns": len(numeric_cols),
-            "hypothesis_tests": min(len(correlations), 10),
             "significant_correlations": len([c for c in correlations if c.get("significant")]),
             "correlations": correlations[:10],  # Top 10 correlations
             "normality_tests": normality_tests,
