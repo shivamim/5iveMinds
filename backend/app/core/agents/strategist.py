@@ -91,13 +91,19 @@ BUSINESS QUESTION CONTEXT: Analyze this dataset for actionable business insights
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {{
+  "executive_summary": "A comprehensive 2-3 sentence summary of the analysis findings and business implications.",
   "business_insights": ["insight 1", "insight 2", "insight 3", "insight 4"],
+  "key_findings": ["key finding 1", "key finding 2", "key finding 3"],
   "recommended_actions": [
     {{"action": "string", "priority": "High|Medium|Low", "timeline": "string"}},
     {{"action": "string", "priority": "High|Medium|Low", "timeline": "string"}},
     {{"action": "string", "priority": "High|Medium|Low", "timeline": "string"}}
   ],
+  "recommendations": [
+    {{"recommendation": "string", "priority": "High|Medium|Low", "timeline": "string", "expected_outcome": "string"}}
+  ],
   "roi_projection": {{"conservative": "+X%", "moderate": "+Y%", "optimistic": "+Z%"}},
+  "business_impact": {{"conservative": "+X%", "moderate": "+Y%", "optimistic": "+Z%"}},
   "risk_matrix": [
     {{"risk": "string", "likelihood": "High|Medium|Low", "impact": "High|Medium|Low"}}
   ]
@@ -125,6 +131,33 @@ Respond with ONLY valid JSON (no markdown, no explanation):
         # Validate and sanitize ROI values
         roi_projection = self._sanitize_roi(roi_projection)
 
+        # CRITICAL FIX: Build frontend-compatible fields
+        # Derive executive_summary from insights if not provided
+        executive_summary = groq_insights.get("executive_summary", "")
+        if not executive_summary and business_insights:
+            # Build a summary from the first 2 insights
+            summary_parts = business_insights[:2]
+            executive_summary = " ".join(summary_parts)
+            if len(executive_summary) > 300:
+                executive_summary = executive_summary[:297] + "..."
+
+        # Derive key_findings from insights if not provided
+        key_findings = groq_insights.get("key_findings", business_insights[:4])
+
+        # Derive recommendations from recommended_actions if not provided
+        recommendations = groq_insights.get("recommendations", [])
+        if not recommendations and recommended_actions:
+            for action in recommended_actions:
+                recommendations.append({
+                    "recommendation": action.get("action", ""),
+                    "priority": action.get("priority", "Medium"),
+                    "timeline": action.get("timeline", "TBD"),
+                    "expected_outcome": action.get("expected_impact", ""),
+                })
+
+        # Derive business_impact from roi_projection if not provided
+        business_impact = groq_insights.get("business_impact", roi_projection)
+
         result = {
             "quality_score": round(min(75 + len(business_insights) * 3 + len(recommended_actions) * 2, 96), 1),
             "llm_powered": groq_insights is not None and "template" not in str(groq_insights.get("_source", "")),
@@ -133,6 +166,17 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             "risk_matrix": risk_matrix if risk_matrix else self._default_risks(column_stats),
             "recommended_actions": recommended_actions,
             "scenario_simulations": self._calculate_scenarios(roi_projection),
+            # CRITICAL FIX: Frontend-compatible fields
+            "executive_summary": executive_summary,
+            "key_findings": key_findings,
+            "recommendations": recommendations,
+            "business_impact": business_impact,
+            "model_performance": {
+                "best_model": ml.get("best_model", "N/A"),
+                "r2": ml.get("best_r2", "N/A"),
+                "rmse": ml.get("best_rmse", "N/A"),
+                "quality_score": ml.get("quality_score", "N/A"),
+            }
         }
 
         self.board.post("strategy", result)
@@ -240,10 +284,36 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             "optimistic": f"+{round(20 + quality_factor * 15, 1)}%"
         }
 
+        # Build executive summary
+        exec_summary = (
+            f"Analysis of '{filename}' ({row_count:,} records, {len(columns)} columns) "
+            f"reveals {len(insights)} key insights. "
+            f"Data quality is {quality_score:.0f}/100. "
+            f"Best performing model is {ml.get('best_model', 'ensemble')} with R²={ml.get('best_r2', 'N/A')}. "
+            f"Top predictive feature is {max(feature_importance.items(), key=lambda x: x[1])[0] if feature_importance else 'N/A'}."
+        )
+
+        # Build key_findings
+        key_findings = insights[:4] if insights else ["Analysis completed successfully"]
+
+        # Build recommendations
+        recommendations = []
+        for action in actions[:3]:
+            recommendations.append({
+                "recommendation": action["action"],
+                "priority": action["priority"],
+                "timeline": action["timeline"],
+                "expected_outcome": "Improved model performance and data reliability",
+            })
+
         return {
+            "executive_summary": exec_summary,
             "business_insights": insights[:4],
+            "key_findings": key_findings,
             "recommended_actions": actions[:3],
+            "recommendations": recommendations,
             "roi_projection": roi_projection,
+            "business_impact": roi_projection,
             "risk_matrix": self._default_risks(column_stats),
             "_source": "template"  # marker for tracking
         }
