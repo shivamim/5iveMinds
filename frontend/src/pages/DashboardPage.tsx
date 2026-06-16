@@ -11,7 +11,6 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
-// Agent icon mapping for the dashboard
 const AGENT_ICONS: Record<string, React.ReactNode> = {
   data_engineer: <Database className="h-4 w-4" />,
   statistician: <TrendingUp className="h-4 w-4" />,
@@ -29,33 +28,23 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 }
 
 export default function DashboardPage() {
-  const {
-    currentRun,
-    setCurrentRun,
-    setAgentExecutions,
-  } = useStore()
+  const { currentRun, setCurrentRun, setAgentExecutions, agentExecutions } = useStore()
 
   const [status, setStatus] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const intervalRef = useRef<<ReturnType<<typeof setInterval> | null>(null)
 
-  // FIX: Wrap in useCallback to prevent stale closure in setInterval
   const fetchStatus = useCallback(async () => {
     if (!currentRun?.id) return
-
     try {
       const res = await pipelineApi.getStatus(currentRun.id)
-
-      // FIX: Read from correct response structure: res.data.run.status (not res.data.status)
       const runData = res.data?.run ?? {}
       const executions = res.data?.executions ?? []
       const progressPercent = res.data?.progress_percent ?? 0
 
-      // Build normalized status object for UI rendering
       const normalizedStatus = {
         ...res.data,
-        // Flatten run fields for backward compatibility with UI
         status: runData.status ?? 'loading',
         quality_score_avg: runData.quality_score_avg,
         completed_at: runData.completed_at,
@@ -63,19 +52,16 @@ export default function DashboardPage() {
         total_time_ms: runData.total_time_ms,
         dataset_name: runData.dataset_name,
         business_question: runData.business_question,
-        // Keep executions and progress at top level too
         executions: executions,
         progress_percent: progressPercent,
       }
 
       setStatus(normalizedStatus)
 
-      // CRITICAL: Save agent executions to global store so tab pages can access them
       if (executions.length > 0) {
         setAgentExecutions(executions)
       }
 
-      // FIX: Use correct path to check if pipeline is done
       const pipelineStatus = runData.status
       if (pipelineStatus === 'completed' || pipelineStatus === 'failed') {
         setCurrentRun({
@@ -84,14 +70,11 @@ export default function DashboardPage() {
           quality_score_avg: runData.quality_score_avg,
           completed_at: runData.completed_at,
         })
-
-        // Stop polling when done
         if (intervalRef.current) {
           clearInterval(intervalRef.current)
           intervalRef.current = null
         }
       }
-
       setLoading(false)
     } catch (err: any) {
       console.error('Failed to fetch status:', err)
@@ -100,19 +83,12 @@ export default function DashboardPage() {
     }
   }, [currentRun, setCurrentRun, setAgentExecutions])
 
-  // Start polling when currentRun changes
   useEffect(() => {
     if (!currentRun?.id) return
-
     setLoading(true)
     setError(null)
-
-    // Fetch immediately
     fetchStatus()
-
-    // Then poll every 3 seconds
     intervalRef.current = setInterval(fetchStatus, 3000)
-
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
@@ -137,11 +113,10 @@ export default function DashboardPage() {
   const isCompleted = status?.status === 'completed'
   const isFailed = status?.status === 'failed'
   const isRunning = status?.status === 'running' || status?.status === 'queued'
-  const executions = status?.executions || []
+  const executions = status?.executions || agentExecutions || []
   const completedAgents = executions.filter((e: any) => e.status === 'completed').length
   const totalAgents = executions.length || 5
 
-  // Calculate per-agent quality scores for transparency
   const agentScores = executions
     .filter((e: any) => e.quality_score !== null && e.quality_score !== undefined)
     .map((e: any) => ({
@@ -151,25 +126,25 @@ export default function DashboardPage() {
       status: e.status,
     }))
 
-  const overallQuality = status?.quality_score_avg
-    ? Math.round(status.quality_score_avg)
-    : null
+  let overallQuality: number | null = null
+  if (status?.quality_score_avg != null) {
+    let q = Number(status.quality_score_avg)
+    if (q > 100) q = q / 100
+    overallQuality = Math.round(Math.max(0, Math.min(100, q)))
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Pipeline run for {currentRun.dataset_name}
-          </p>
+          <p className="text-muted-foreground">Pipeline run for {currentRun.dataset_name}</p>
         </div>
         <Badge variant={isCompleted ? 'default' : isFailed ? 'destructive' : 'secondary'}>
           {status?.status || 'loading'}
         </Badge>
       </div>
 
-      {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -196,9 +171,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {status?.total_time_ms
-                ? `${(status.total_time_ms / 1000).toFixed(1)}s`
-                : '...'}
+              {status?.total_time_ms ? `${(status.total_time_ms / 1000).toFixed(1)}s` : '...'}
             </div>
           </CardContent>
         </Card>
@@ -210,9 +183,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {overallQuality !== null
-                ? `${overallQuality}%`
-                : '...'}
+              {overallQuality !== null ? `${overallQuality}%` : '...'}
             </div>
             {overallQuality !== null && (
               <p className="text-xs text-muted-foreground mt-1">
@@ -223,7 +194,6 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Per-Agent Quality Scores - NEW: Shows transparent breakdown */}
       {agentScores.length > 0 && (
         <Card>
           <CardHeader>
@@ -237,10 +207,7 @@ export default function DashboardPage() {
                   <span className="text-sm font-medium">{agent.displayName}</span>
                 </div>
                 <div className="flex-1">
-                  <Progress
-                    value={agent.score}
-                    className="h-2"
-                  />
+                  <Progress value={agent.score} className="h-2" />
                 </div>
                 <div className="w-12 text-right">
                   <Badge
@@ -257,17 +224,11 @@ export default function DashboardPage() {
                 <span className="text-sm font-semibold">Overall Average</span>
                 <span className="text-lg font-bold">{overallQuality}%</span>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {overallQuality && overallQuality >= 90 ? 'Excellent - All agents performed well' :
-                 overallQuality && overallQuality >= 75 ? 'Good - Minor areas for improvement' :
-                 'Fair - Review agent outputs for issues'}
-              </p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Business Question */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Business Question</CardTitle>
@@ -277,7 +238,6 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Pipeline Progress */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pipeline Progress</CardTitle>
@@ -291,7 +251,6 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Agent Executions */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold">Agent Executions</h2>
         {executions.length === 0 ? (
@@ -307,22 +266,16 @@ export default function DashboardPage() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    {execution.status === 'completed' && (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    )}
-                    {execution.status === 'failed' && (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
-                    {execution.status === 'running' && (
-                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                    )}
+                    {execution.status === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                    {execution.status === 'failed' && <XCircle className="h-4 w-4 text-red-500" />}
+                    {execution.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
                     <span className="font-medium capitalize">
                       {AGENT_DISPLAY_NAMES[execution.agent_name] || execution.agent_name}
                     </span>
                   </div>
                   <Badge variant={
                     execution.status === 'completed' ? 'default' :
-                      execution.status === 'failed' ? 'destructive' : 'secondary'
+                    execution.status === 'failed' ? 'destructive' : 'secondary'
                   }>
                     {execution.status}
                   </Badge>
@@ -360,9 +313,7 @@ export default function DashboardPage() {
                 )}
 
                 <div className="mt-2 text-xs text-muted-foreground">
-                  Duration: {execution.execution_time_ms
-                    ? `${(execution.execution_time_ms / 1000).toFixed(1)}s`
-                    : 'N/A'}
+                  Duration: {execution.execution_time_ms ? `${(execution.execution_time_ms / 1000).toFixed(1)}s` : 'N/A'}
                   {execution.quality_score && ` | Quality: ${Math.round(execution.quality_score)}%`}
                 </div>
               </CardContent>
@@ -371,33 +322,22 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Navigation to Results */}
       {isCompleted && (
         <div className="flex flex-wrap gap-4">
           <Button asChild className="flex-1 min-w-[200px]">
-            <Link to="/data-engineering">
-              View Data Engineering <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
+            <Link to="/data-engineering">View Data Engineering <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/statistics">
-              View Statistics <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
+            <Link to="/statistics">View Statistics <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/ml-results">
-              View ML Results <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
+            <Link to="/ml-results">View ML Results <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/strategy">
-              View Strategy <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
+            <Link to="/strategy">View Strategy <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/report">
-              View Report <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
+            <Link to="/report">View Report <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
         </div>
       )}
