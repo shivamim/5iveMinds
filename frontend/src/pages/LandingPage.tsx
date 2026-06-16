@@ -6,15 +6,22 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
-import { Zap, ArrowRight, Brain, BarChart3, Shield, Clock } from 'lucide-react'
+import { Zap, ArrowRight, Brain, BarChart3, Shield, Clock, ChevronDown, Database } from 'lucide-react'
 
 export function LandingPage() {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // FIXED: Allow user to select which dataset to use
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null)
+  const [showDatasetDropdown, setShowDatasetDropdown] = useState(false)
+
   const navigate = useNavigate()
   const setCurrentRun = useStore((s) => s.setCurrentRun)
   const datasets = useStore((s) => s.datasets)
+
+  // FIXED: Use selected dataset or first available
+  const activeDataset = datasets.find(d => d.id === selectedDatasetId) || datasets[0] || null
 
   const handleStart = async () => {
     if (!question.trim()) return
@@ -24,12 +31,19 @@ export function LandingPage() {
       return
     }
 
+    // FIXED: Use the explicitly selected or default dataset
+    const datasetToUse = activeDataset
+    if (!datasetToUse) {
+      setError('Please select a dataset to analyze.')
+      return
+    }
+
     setLoading(true)
     setError(null)
 
     try {
       const response = await pipelineApi.start({
-        dataset_id: datasets[0].id,
+        dataset_id: datasetToUse.id,
         business_question: question,
       })
       // Map backend response to our PipelineRun type
@@ -38,7 +52,9 @@ export function LandingPage() {
         id: runData.id,
         status: runData.status,
         business_question: runData.business_question,
-        dataset_name: runData.dataset_name || datasets[0].filename,
+        // FIXED: Include dataset_id in the run data
+        dataset_id: runData.dataset_id || datasetToUse.id,
+        dataset_name: runData.dataset_name || datasetToUse.filename,
         total_time_ms: runData.total_time_ms,
         quality_score_avg: runData.quality_score_avg,
         started_at: runData.started_at,
@@ -50,6 +66,8 @@ export function LandingPage() {
       let msg = 'Failed to start analysis. Please check that the backend API is running and accessible.'
       if (error.response?.data?.detail) {
         msg = `Server error: ${error.response.data.detail}`
+      } else if (error.response?.status === 404) {
+        msg = 'Dataset not found. It may have been deleted. Please upload again.'
       } else if (error.request) {
         msg = 'Cannot connect to backend. Please check your API URL configuration (VITE_API_URL).'
       }
@@ -99,6 +117,73 @@ export function LandingPage() {
             <DataUpload />
           </motion.div>
 
+          {/* FIXED: Dataset selector when multiple datasets uploaded */}
+          {datasets.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.25 }}
+              className="max-w-2xl mx-auto mb-6"
+            >
+              <div className="relative">
+                <button
+                  onClick={() => setShowDatasetDropdown(!showDatasetDropdown)}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-lg border bg-background hover:bg-accent transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <Database className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-sm font-medium">
+                        {activeDataset?.filename || 'Select dataset'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {activeDataset
+                          ? `${activeDataset.row_count.toLocaleString()} rows, ${activeDataset.column_count} columns`
+                          : 'Choose a dataset for analysis'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {datasets.length > 1 && (
+                      <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+                        {datasets.length} datasets
+                      </span>
+                    )}
+                    <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${showDatasetDropdown ? 'rotate-180' : ''}`} />
+                  </div>
+                </button>
+
+                {showDatasetDropdown && datasets.length > 1 && (
+                  <div className="absolute z-10 w-full mt-1 bg-background border rounded-lg shadow-lg overflow-hidden">
+                    {datasets.map((dataset) => (
+                      <button
+                        key={dataset.id}
+                        onClick={() => {
+                          setSelectedDatasetId(dataset.id)
+                          setShowDatasetDropdown(false)
+                        }}
+                        className={`w-full flex items-center justify-between px-4 py-3 text-left hover:bg-accent transition-colors ${
+                          dataset.id === activeDataset?.id ? 'bg-primary/5 border-l-2 border-primary' : ''
+                        }`}
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{dataset.filename}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {dataset.row_count.toLocaleString()} rows, {dataset.column_count} columns
+                          </p>
+                        </div>
+                        {dataset.id === activeDataset?.id && (
+                          <div className="h-2 w-2 rounded-full bg-primary" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -116,7 +201,7 @@ export function LandingPage() {
               />
               <Button
                 onClick={handleStart}
-                disabled={loading || !question.trim()}
+                disabled={loading || !question.trim() || !activeDataset}
                 className="px-6"
               >
                 {loading ? (
@@ -132,9 +217,10 @@ export function LandingPage() {
             {error && (
               <p className="text-red-500 text-sm mt-2">{error}</p>
             )}
-            {datasets.length > 0 && (
+            {activeDataset && (
               <p className="text-emerald-500 text-sm mt-2">
-                Dataset ready: {datasets[0].filename} ({datasets[0].row_count.toLocaleString()} rows, {datasets[0].column_count} columns)
+                Analyzing: {activeDataset.filename} ({activeDataset.row_count.toLocaleString()} rows, {activeDataset.column_count} columns)
+                {selectedDatasetId && datasets.length > 1 && ' — selected from dropdown'}
               </p>
             )}
           </motion.div>
