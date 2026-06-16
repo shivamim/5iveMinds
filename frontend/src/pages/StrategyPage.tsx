@@ -1,285 +1,324 @@
 import { useStore } from '@/stores/appStore'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { FileQuestion, Lightbulb, Target, TrendingUp } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Lightbulb, Target, ListTodo, Shield, FileUp } from 'lucide-react'
 
-export function StrategyPage() {
-  // FIXED: Read strategist output from store instead of hardcoded data
-  const getAgentOutput = useStore((s) => s.getAgentOutput)
-  const agentExecutions = useStore((s) => s.agentExecutions)
-  const currentRun = useStore((s) => s.currentRun)
+export default function StrategyPage() {
+  const { getAgentOutput, currentRun } = useStore()
+  
+  // CRITICAL: Read from the store, not hardcoded data
+  const strategyOutput = getAgentOutput('strategist')
+  
+  if (!currentRun) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <FileUp className="w-12 h-12 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">No Pipeline Running</h2>
+        <p className="text-muted-foreground">Start an analysis from the Dashboard to see strategy results.</p>
+      </div>
+    )
+  }
 
-  const strategistOutput = getAgentOutput('strategist')
-  const execution = agentExecutions.find((e) => e.agent_name === 'strategist')
+  if (!strategyOutput) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <Lightbulb className="w-12 h-12 text-muted-foreground animate-pulse" />
+        <h2 className="text-xl font-semibold">Waiting for Strategist...</h2>
+        <p className="text-muted-foreground">The Strategist is generating business insights and recommendations.</p>
+      </div>
+    )
+  }
 
-  const insights = strategistOutput?.insights as
-    | Array<{ title: string; description: string; confidence?: number }>
-    | null
-  const actions = strategistOutput?.action_items as
-    | Array<{
-        action: string
-        owner?: string
-        timeline?: string
-        priority?: string
-      }>
-    | null
-  const recommendations = strategistOutput?.recommendations as
-    | Array<{
-        title: string
-        description: string
-        priority?: string
-        roi?: string
-      }>
-    | null
-  const swot = strategistOutput?.swot as {
-    strengths?: string[]
-    weaknesses?: string[]
-    opportunities?: string[]
-    threats?: string[]
-  } | null
+  const insights = strategyOutput.business_insights || []
+  const actions = strategyOutput.recommended_actions || []
+  const roi = strategyOutput.roi_projection || {}
+  const risks = strategyOutput.risk_matrix || []
+  const scenarios = strategyOutput.scenario_simulations || {}
+  const qualityScore = strategyOutput.quality_score
+
+  // Build SWOT from available data
+  const swot = strategyOutput.swot || {
+    strengths: insights.filter((i: string) => i.toLowerCase().includes('strong') || i.toLowerCase().includes('quality')),
+    weaknesses: insights.filter((i: string) => i.toLowerCase().includes('weak') || i.toLowerCase().includes('missing') || i.toLowerCase().includes('cleanup')),
+    opportunities: insights.filter((i: string) => i.toLowerCase().includes('opportunit') || i.toLowerCase().includes('predict') || i.toLowerCase().includes('feature')),
+    threats: risks.map((r: any) => r.risk)
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Strategy</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Strategy</h1>
         <p className="text-muted-foreground">
           Business insights, action items, and strategic recommendations
         </p>
-        {currentRun && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Analysis for: {currentRun.dataset_name}
-          </p>
-        )}
+        <p className="text-sm text-muted-foreground mt-1">
+          Analysis for: {currentRun.dataset_name}
+        </p>
       </div>
 
-      {execution?.status === 'running' ? (
-        <Card>
-          <CardContent className="pt-6 text-center text-muted-foreground py-12">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            Developing strategic recommendations...
-          </CardContent>
-        </Card>
-      ) : strategistOutput ? (
-        <>
-          {insights && insights.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Lightbulb className="h-5 w-5 text-amber-500" />
-                <h2 className="text-xl font-semibold">Key Insights</h2>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {insights.map((insight, i) => (
-                  <Card key={i}>
-                    <CardHeader>
-                      <CardTitle className="text-base">{insight.title}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground">
-                        {insight.description}
-                      </p>
-                      {insight.confidence !== undefined && (
-                        <Badge variant="outline" className="mt-3">
-                          Confidence: {(insight.confidence * 100).toFixed(0)}%
-                        </Badge>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
+      <div className="flex gap-2 mb-4">
+        <Badge variant="outline">{insights.length} insights</Badge>
+        <Badge variant="outline">{actions.length} actions</Badge>
+        <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
+        {strategyOutput.llm_powered && <Badge>LLM Powered</Badge>}
+      </div>
 
-          {recommendations && recommendations.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-emerald-500" />
-                <h2 className="text-xl font-semibold">Recommendations</h2>
-              </div>
-              {recommendations.map((rec, i) => (
-                <Card key={i}>
-                  <CardHeader>
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-base">{rec.title}</CardTitle>
-                      {rec.priority && (
-                        <Badge
-                          variant={
-                            rec.priority === 'High'
-                              ? 'destructive'
-                              : rec.priority === 'Medium'
-                                ? 'secondary'
-                                : 'outline'
-                          }
-                        >
-                          {rec.priority}
-                        </Badge>
-                      )}
+      <Tabs defaultValue="insights" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="insights">Insights</TabsTrigger>
+          <TabsTrigger value="actions">Actions</TabsTrigger>
+          <TabsTrigger value="swot">SWOT</TabsTrigger>
+          <TabsTrigger value="roi">ROI</TabsTrigger>
+        </TabsList>
+
+        {/* Insights Tab */}
+        <TabsContent value="insights" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Lightbulb className="h-5 w-5" />
+                Business Insights
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {insights.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No business insights generated.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {insights.map((insight: string, idx: number) => (
+                    <div key={idx} className="flex gap-3 p-3 bg-muted rounded-lg">
+                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                        {idx + 1}
+                      </div>
+                      <p className="text-sm leading-relaxed">{insight}</p>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      {rec.description}
-                    </p>
-                    {rec.roi && (
-                      <p className="text-sm text-emerald-500 mt-2">
-                        Projected ROI: {rec.roi}
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          {actions && actions.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Target className="h-5 w-5 text-blue-500" />
-                <h2 className="text-xl font-semibold">Action Items</h2>
-              </div>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="space-y-3">
-                    {actions.map((action, i) => (
-                      <div
-                        key={i}
-                        className="flex items-start justify-between p-3 rounded-lg bg-muted"
-                      >
-                        <div>
-                          <p className="font-medium">{action.action}</p>
-                          <div className="flex gap-2 mt-1">
-                            {action.owner && (
-                              <span className="text-xs text-muted-foreground">
-                                Owner: {action.owner}
-                              </span>
-                            )}
-                            {action.timeline && (
-                              <span className="text-xs text-muted-foreground">
-                                Timeline: {action.timeline}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {action.priority && (
-                          <Badge
-                            variant={
-                              action.priority === 'High'
-                                ? 'destructive'
-                                : action.priority === 'Medium'
-                                  ? 'secondary'
-                                  : 'outline'
-                            }
-                          >
+        {/* Actions Tab */}
+        <TabsContent value="actions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ListTodo className="h-5 w-5" />
+                Recommended Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {actions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No recommended actions generated.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {actions.map((action: any, idx: number) => (
+                    <Card key={idx} className="border-l-4 border-l-blue-500">
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-semibold">{action.action}</h4>
+                          <Badge variant={
+                            action.priority === 'High' ? 'destructive' :
+                            action.priority === 'Medium' ? 'secondary' : 'outline'
+                          }>
                             {action.priority}
                           </Badge>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Target className="h-4 w-4" />
+                          Timeline: {action.timeline || 'TBD'}
+                        </div>
+                        {action.expected_impact && (
+                          <p className="mt-2 text-sm text-green-600">{action.expected_impact}</p>
                         )}
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          {swot &&
-            (swot.strengths?.length ||
-              swot.weaknesses?.length ||
-              swot.opportunities?.length ||
-              swot.threats?.length) && (
-              <div className="space-y-4">
-                <h2 className="text-xl font-semibold">SWOT Analysis</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {swot.strengths && swot.strengths.length > 0 && (
-                    <Card className="border-l-4 border-l-emerald-500">
-                      <CardHeader>
-                        <CardTitle className="text-base text-emerald-500">
-                          Strengths
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          {swot.strengths.map((s, i) => (
-                            <li key={i} className="text-sm text-muted-foreground">
-                              {s}
-                            </li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  )}
-                  {swot.weaknesses && swot.weaknesses.length > 0 && (
-                    <Card className="border-l-4 border-l-red-500">
-                      <CardHeader>
-                        <CardTitle className="text-base text-red-500">
-                          Weaknesses
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          {swot.weaknesses.map((w, i) => (
-                            <li key={i} className="text-sm text-muted-foreground">
-                              {w}
-                            </li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  )}
-                  {swot.opportunities && swot.opportunities.length > 0 && (
-                    <Card className="border-l-4 border-l-blue-500">
-                      <CardHeader>
-                        <CardTitle className="text-base text-blue-500">
-                          Opportunities
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          {swot.opportunities.map((o, i) => (
-                            <li key={i} className="text-sm text-muted-foreground">
-                              {o}
-                            </li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  )}
-                  {swot.threats && swot.threats.length > 0 && (
-                    <Card className="border-l-4 border-l-amber-500">
-                      <CardHeader>
-                        <CardTitle className="text-base text-amber-500">
-                          Threats
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          {swot.threats.map((t, i) => (
-                            <li key={i} className="text-sm text-muted-foreground">
-                              {t}
-                            </li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  )}
+        {/* SWOT Tab */}
+        <TabsContent value="swot" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card className="border-l-4 border-l-green-500">
+              <CardHeader>
+                <CardTitle className="text-green-600 flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Strengths
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {swot.strengths?.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">No strengths identified.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {swot.strengths.map((s: string, i: number) => (
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-green-500">✓</span> {s}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-l-4 border-l-yellow-500">
+              <CardHeader>
+                <CardTitle className="text-yellow-600 flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Weaknesses
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {swot.weaknesses?.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">No weaknesses identified.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {swot.weaknesses.map((w: string, i: number) => (
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-yellow-500">!</span> {w}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-l-4 border-l-blue-500">
+              <CardHeader>
+                <CardTitle className="text-blue-600 flex items-center gap-2">
+                  <Target className="h-5 w-5" />
+                  Opportunities
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {swot.opportunities?.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">No opportunities identified.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {swot.opportunities.map((o: string, i: number) => (
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-blue-500">→</span> {o}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-l-4 border-l-red-500">
+              <CardHeader>
+                <CardTitle className="text-red-600 flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5" />
+                  Threats
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {swot.threats?.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">No threats identified.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {swot.threats.map((t: string, i: number) => (
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-red-500">⚠</span> {t}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ROI Tab */}
+        <TabsContent value="roi" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5" />
+                ROI Projection
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="p-4 bg-muted rounded-lg text-center">
+                  <div className="text-sm text-muted-foreground mb-1">Conservative</div>
+                  <div className="text-2xl font-bold text-yellow-500">{roi.conservative || 'N/A'}</div>
+                </div>
+                <div className="p-4 bg-muted rounded-lg text-center">
+                  <div className="text-sm text-muted-foreground mb-1">Moderate</div>
+                  <div className="text-2xl font-bold text-blue-500">{roi.moderate || 'N/A'}</div>
+                </div>
+                <div className="p-4 bg-muted rounded-lg text-center">
+                  <div className="text-sm text-muted-foreground mb-1">Optimistic</div>
+                  <div className="text-2xl font-bold text-green-500">{roi.optimistic || 'N/A'}</div>
                 </div>
               </div>
-            )}
-        </>
-      ) : (
-        <Card>
-          <CardContent className="pt-6">
-            <EmptyState message="Run a pipeline to see strategic analysis. The Strategist agent extracts business insights, creates actionable recommendations, and performs SWOT analysis based on your data." />
-          </CardContent>
-        </Card>
-      )}
+              {scenarios.best_case && (
+                <div className="mt-4 p-3 bg-muted rounded-lg">
+                  <h4 className="font-semibold mb-2">Scenario Multipliers</h4>
+                  <div className="flex gap-4 text-sm">
+                    <span>Best: <Badge variant="default">{scenarios.best_case}x</Badge></span>
+                    <span>Base: <Badge variant="secondary">{scenarios.base_case}x</Badge></span>
+                    <span>Worst: <Badge variant="outline">{scenarios.worst_case}x</Badge></span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Risk Matrix */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldAlert className="h-5 w-5" />
+                Risk Matrix
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {risks.length === 0 ? (
+                <div className="text-center py-4 text-muted-foreground">
+                  No risks identified.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {risks.map((risk: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                      <span className="font-medium">{risk.risk}</span>
+                      <div className="flex gap-2">
+                        <Badge variant={
+                          risk.likelihood === 'High' ? 'destructive' :
+                          risk.likelihood === 'Medium' ? 'secondary' : 'outline'
+                        }>
+                          Likelihood: {risk.likelihood}
+                        </Badge>
+                        <Badge variant={
+                          risk.impact === 'High' ? 'destructive' :
+                          risk.impact === 'Medium' ? 'secondary' : 'outline'
+                        }>
+                          Impact: {risk.impact}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
 
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-12">
-      <FileQuestion className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-      <p className="text-muted-foreground max-w-md mx-auto">{message}</p>
-    </div>
-  )
-}
+// Need to import this for the SWOT tab
+import { AlertTriangle, ShieldAlert } from 'lucide-react'
