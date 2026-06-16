@@ -1,15 +1,43 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '@/stores/appStore'
+import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BarChart, Activity, FlaskConical, FileUp } from 'lucide-react'
 
 export default function StatisticsPage() {
-  const { getAgentOutput, currentRun } = useStore()
-  
-  // CRITICAL: Read from the store, not hardcoded data
+  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const [fetching, setFetching] = useState(false)
+
+  // CRITICAL FIX: Fetch data independently so this page works even if user
+  // navigates directly via URL or refreshes
+  useEffect(() => {
+    if (!currentRun?.id) return
+
+    const loadData = async () => {
+      const existing = getAgentOutput('statistician')
+      if (existing) return
+
+      setFetching(true)
+      try {
+        const res = await pipelineApi.getStatus(currentRun.id)
+        const executions = res.data?.executions ?? []
+        if (executions.length > 0) {
+          setAgentExecutions(executions)
+        }
+      } catch (err) {
+        console.error('Failed to fetch agent data:', err)
+      } finally {
+        setFetching(false)
+      }
+    }
+
+    loadData()
+  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+
   const statisticianOutput = getAgentOutput('statistician')
-  
+
   if (!currentRun) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -25,7 +53,11 @@ export default function StatisticsPage() {
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Activity className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Statistician...</h2>
-        <p className="text-muted-foreground">The Statistician agent is analyzing distributions, correlations, and hypothesis tests.</p>
+        <p className="text-muted-foreground">
+          {fetching
+            ? 'Fetching results from server...'
+            : 'The Statistician agent is analyzing distributions, correlations, and hypothesis tests.'}
+        </p>
       </div>
     )
   }
@@ -46,7 +78,7 @@ export default function StatisticsPage() {
         </p>
       </div>
 
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4">
         <Badge variant="outline">{numericColumns} numeric columns</Badge>
         <Badge variant="outline">{correlations.length} correlations</Badge>
         <Badge variant={significantCorrelations > 0 ? 'default' : 'secondary'}>
