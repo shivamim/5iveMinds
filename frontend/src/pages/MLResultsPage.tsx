@@ -17,7 +17,7 @@ export default function MLResultsPage() {
 
     const loadData = async () => {
       const existing = getAgentOutput('ml_engineer')
-      if (existing) return
+      if (existing && Object.keys(existing).length > 0) return
 
       setFetching(true)
       try {
@@ -34,9 +34,25 @@ export default function MLResultsPage() {
     }
 
     loadData()
-  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+  }, [currentRun?.id])
 
-  const mlOutput = getAgentOutput('ml_engineer')
+  const mlOutput = getAgentOutput('ml_engineer') || {}
+
+  // CRITICAL FIX: Handle all possible data shapes from backend
+  const bestModel = mlOutput.best_model || 'N/A'
+  const bestR2 = mlOutput.best_r2
+  const bestRmse = mlOutput.best_rmse
+  const featureImportance = mlOutput.feature_importance || {}
+  const modelsEvaluated = mlOutput.models_evaluated || []
+  const qualityScore = mlOutput.quality_score
+  const shapSummary = mlOutput.shap_summary || {}
+
+  const features = Object.entries(featureImportance)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
+    .slice(0, 10)
+
+  // Check if we have meaningful data
+  const hasData = bestModel !== 'N/A' || features.length > 0 || modelsEvaluated.length > 0
 
   if (!currentRun) {
     return (
@@ -48,7 +64,7 @@ export default function MLResultsPage() {
     )
   }
 
-  if (!mlOutput) {
+  if (!hasData) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Brain className="w-12 h-12 text-muted-foreground animate-pulse" />
@@ -61,18 +77,6 @@ export default function MLResultsPage() {
       </div>
     )
   }
-
-  const bestModel = mlOutput.best_model || 'N/A'
-  const bestR2 = mlOutput.best_r2
-  const bestRmse = mlOutput.best_rmse
-  const featureImportance = mlOutput.feature_importance || {}
-  const modelsEvaluated = mlOutput.models_evaluated || []
-  const qualityScore = mlOutput.quality_score
-  const shapSummary = mlOutput.shap_summary || {}
-
-  const features = Object.entries(featureImportance)
-    .sort(([, a], [, b]) => (b as number) - (a as number))
-    .slice(0, 10)
 
   return (
     <div className="space-y-6">
@@ -116,7 +120,8 @@ export default function MLResultsPage() {
           <CardContent>
             {features.length === 0 ? (
               <div className="text-center py-4 text-muted-foreground">
-                No feature importance data available.
+                <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No feature importance data available.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -148,7 +153,8 @@ export default function MLResultsPage() {
           <CardContent>
             {modelsEvaluated.length === 0 ? (
               <div className="text-center py-4 text-muted-foreground">
-                No model comparison data available.
+                <Zap className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No model comparison data available.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -180,16 +186,22 @@ export default function MLResultsPage() {
           <CardContent>
             {Object.keys(shapSummary).length === 0 ? (
               <div className="text-center py-4 text-muted-foreground">
-                No SHAP summary available from the ML Engineer agent.
+                <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No SHAP summary available from the ML Engineer agent.</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {Object.entries(shapSummary).map(([feature, data]: [string, any]) => (
                   <div key={feature} className="flex justify-between items-center p-2 bg-muted rounded">
                     <span className="font-medium">{feature}</span>
-                    <div className="flex gap-2 text-sm">
+                    <div className="flex gap-3 text-sm">
                       <span className="text-green-500">+{data.positive?.toFixed?.(3) ?? data.positive ?? 0}</span>
                       <span className="text-red-500">{data.negative?.toFixed?.(3) ?? data.negative ?? 0}</span>
+                      {data.importance && (
+                        <Badge variant="outline" className="text-xs">
+                          {data.importance?.toFixed?.(3) ?? data.importance}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                 ))}
