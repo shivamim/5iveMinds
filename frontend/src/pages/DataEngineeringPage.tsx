@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '@/stores/appStore'
+import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -6,12 +8,38 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Database, Wrench, AlertTriangle, FileUp } from 'lucide-react'
 
 export default function DataEngineeringPage() {
-  const { getAgentOutput, currentRun } = useStore()
-  
-  // CRITICAL: Read from the store, not hardcoded data
+  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const [fetching, setFetching] = useState(false)
+
+  // CRITICAL FIX: Fetch data independently so this page works even if user
+  // navigates directly via URL or refreshes (without going through Dashboard first)
+  useEffect(() => {
+    if (!currentRun?.id) return
+
+    const loadData = async () => {
+      // Only fetch if we don't already have data for this agent
+      const existing = getAgentOutput('data_engineer')
+      if (existing) return
+
+      setFetching(true)
+      try {
+        const res = await pipelineApi.getStatus(currentRun.id)
+        const executions = res.data?.executions ?? []
+        if (executions.length > 0) {
+          setAgentExecutions(executions)
+        }
+      } catch (err) {
+        console.error('Failed to fetch agent data:', err)
+      } finally {
+        setFetching(false)
+      }
+    }
+
+    loadData()
+  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+
   const dataEngineerOutput = getAgentOutput('data_engineer')
-  
-  // If no pipeline data yet, show empty state
+
   if (!currentRun) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -22,13 +50,16 @@ export default function DataEngineeringPage() {
     )
   }
 
-  // If pipeline running but data_engineer not completed yet
   if (!dataEngineerOutput) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Database className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Data Engineer...</h2>
-        <p className="text-muted-foreground">The Data Engineer agent is analyzing your dataset schema, quality, and outliers.</p>
+        <p className="text-muted-foreground">
+          {fetching
+            ? 'Fetching results from server...'
+            : 'The Data Engineer agent is analyzing your dataset schema, quality, and outliers.'}
+        </p>
       </div>
     )
   }
@@ -47,7 +78,7 @@ export default function DataEngineeringPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Data Engineering</h1>
         <p className="text-muted-foreground">
-          Upload data, schema inference, imputation, and outlier detection
+          Schema inference, cleaning, imputation, and outlier detection
         </p>
       </div>
 
@@ -68,7 +99,7 @@ export default function DataEngineeringPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-4 mb-4">
+              <div className="flex flex-wrap gap-2 mb-4">
                 <Badge variant="outline">{rowCount || '?'} rows</Badge>
                 <Badge variant="outline">{columnCount || columns.length} columns</Badge>
                 <Badge variant={qualityScore >= 90 ? 'default' : qualityScore >= 70 ? 'secondary' : 'destructive'}>
@@ -78,7 +109,7 @@ export default function DataEngineeringPage() {
                   Missing: {missingValuesPct ?? 0}%
                 </Badge>
               </div>
-              
+
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -103,8 +134,8 @@ export default function DataEngineeringPage() {
                         <TableCell>{colSchema.null_pct ?? 0}%</TableCell>
                         <TableCell>{colSchema.unique_count ?? 'N/A'}</TableCell>
                         <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate">
-                          {Array.isArray(colSchema.sample_values) 
-                            ? colSchema.sample_values.slice(0, 3).join(', ') 
+                          {Array.isArray(colSchema.sample_values)
+                            ? colSchema.sample_values.slice(0, 3).join(', ')
                             : 'N/A'}
                         </TableCell>
                       </TableRow>
@@ -188,8 +219,8 @@ export default function DataEngineeringPage() {
                         </div>
                         {detail.values && (
                           <div className="mt-2 text-xs text-muted-foreground bg-muted p-2 rounded">
-                            Values: {Array.isArray(detail.values) 
-                              ? detail.values.slice(0, 10).join(', ') 
+                            Values: {Array.isArray(detail.values)
+                              ? detail.values.slice(0, 10).join(', ')
                               : detail.values}
                           </div>
                         )}
