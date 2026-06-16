@@ -15,8 +15,8 @@ class PipelineRunCreate(BaseModel):
 class PipelineRunResponse(BaseModel):
     id: UUID
     status: str
-    # FIXED: Added dataset_id so frontend knows which dataset was used
-    dataset_id: Optional[str] = None
+    # FIXED: Was Optional[str], must be Optional[UUID] to match the SQLAlchemy UUID type
+    dataset_id: Optional[UUID] = None
     dataset_name: str
     business_question: str
     started_at: Optional[datetime]
