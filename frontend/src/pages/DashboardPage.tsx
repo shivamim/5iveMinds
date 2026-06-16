@@ -1,84 +1,109 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useStore } from '@/stores/appStore'
-import { pipelineApi } from '@/services/api'
+import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
-import { 
-  Activity, Clock, BarChart3, ArrowRight, CheckCircle2, 
-  XCircle, Loader2, AlertCircle 
+import {
+  Activity, Clock, BarChart3, ArrowRight, CheckCircle2,
+  XCircle, Loader2, AlertCircle
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 export default function DashboardPage() {
-  const { 
-    currentRun, 
-    setCurrentRun, 
-    setAgentExecutions,  // CRITICAL: This must be called to populate the store
-    theme 
+  const {
+    currentRun,
+    setCurrentRun,
+    setAgentExecutions,
+    theme
   } = useStore()
-  
+
   const [status, setStatus] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const intervalRef = useRef<<ReturnType<<typeof setInterval> | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Fetch pipeline status
-  const fetchStatus = async () => {
+  // FIX: Wrap in useCallback to prevent stale closure in setInterval
+  const fetchStatus = useCallback(async () => {
     if (!currentRun?.id) return
-    
+
     try {
       const res = await pipelineApi.getStatus(currentRun.id)
-      setStatus(res.data)
-      
-      // CRITICAL FIX: Save agent executions to the global store
-      // so that DataEngineeringPage, StatisticsPage, MLResultsPage, 
-      // ReportPage, and StrategyPage can access them via getAgentOutput()
-      if (res.data?.executions && Array.isArray(res.data.executions)) {
-        setAgentExecutions(res.data.executions)
+
+      // FIX: Read from correct response structure: res.data.run.status (not res.data.status)
+      const runData = res.data?.run ?? {}
+      const executions = res.data?.executions ?? []
+      const progressPercent = res.data?.progress_percent ?? 0
+
+      // Build normalized status object for UI rendering
+      const normalizedStatus = {
+        ...res.data,
+        // Flatten run fields for backward compatibility with UI
+        status: runData.status ?? 'loading',
+        quality_score_avg: runData.quality_score_avg,
+        completed_at: runData.completed_at,
+        started_at: runData.started_at,
+        total_time_ms: runData.total_time_ms,
+        dataset_name: runData.dataset_name,
+        business_question: runData.business_question,
+        // Keep executions and progress at top level too
+        executions: executions,
+        progress_percent: progressPercent,
       }
-      
-      // Update currentRun if completed
-      if (res.data?.status === 'completed' || res.data?.status === 'failed') {
+
+      setStatus(normalizedStatus)
+
+      // CRITICAL: Save agent executions to global store so tab pages can access them
+      if (executions.length > 0) {
+        setAgentExecutions(executions)
+      }
+
+      // FIX: Use correct path to check if pipeline is done
+      const pipelineStatus = runData.status
+      if (pipelineStatus === 'completed' || pipelineStatus === 'failed') {
         setCurrentRun({
           ...currentRun,
-          status: res.data.status,
-          quality_score_avg: res.data.quality_score_avg,
-          completed_at: res.data.completed_at,
+          status: pipelineStatus,
+          quality_score_avg: runData.quality_score_avg,
+          completed_at: runData.completed_at,
         })
-        
+
         // Stop polling when done
         if (intervalRef.current) {
           clearInterval(intervalRef.current)
           intervalRef.current = null
         }
       }
+
+      setLoading(false)
     } catch (err: any) {
       console.error('Failed to fetch status:', err)
       setError(err.message || 'Failed to fetch pipeline status')
+      setLoading(false)
     }
-  }
+  }, [currentRun, setCurrentRun, setAgentExecutions])
 
   // Start polling when currentRun changes
   useEffect(() => {
     if (!currentRun?.id) return
-    
+
     setLoading(true)
     setError(null)
-    
+
     // Fetch immediately
     fetchStatus()
-    
+
     // Then poll every 3 seconds
     intervalRef.current = setInterval(fetchStatus, 3000)
-    
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
+        intervalRef.current = null
       }
     }
-  }, [currentRun?.id])
+  }, [currentRun?.id, fetchStatus])
 
   if (!currentRun) {
     return (
@@ -141,8 +166,8 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {status?.total_time_ms 
-                ? `${(status.total_time_ms / 1000).toFixed(1)}s` 
+              {status?.total_time_ms
+                ? `${(status.total_time_ms / 1000).toFixed(1)}s`
                 : '...'}
             </div>
           </CardContent>
@@ -155,14 +180,14 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {status?.quality_score_avg 
-                ? `${Math.round(status.quality_score_avg)}%` 
+              {status?.quality_score_avg
+                ? `${Math.round(status.quality_score_avg)}%`
                 : '...'}
             </div>
             {status?.quality_score_avg && (
               <p className="text-xs text-green-500 mt-1">
-                {status.quality_score_avg >= 90 ? 'Excellent' : 
-                 status.quality_score_avg >= 75 ? 'Good' : 'Fair'}
+                {status.quality_score_avg >= 90 ? 'Excellent' :
+                  status.quality_score_avg >= 75 ? 'Good' : 'Fair'}
               </p>
             )}
           </CardContent>
@@ -222,12 +247,12 @@ export default function DashboardPage() {
                   </div>
                   <Badge variant={
                     execution.status === 'completed' ? 'default' :
-                    execution.status === 'failed' ? 'destructive' : 'secondary'
+                      execution.status === 'failed' ? 'destructive' : 'secondary'
                   }>
                     {execution.status}
                   </Badge>
                 </div>
-                
+
                 {execution.output_data && (
                   <div className="mt-2 text-sm text-muted-foreground bg-muted p-2 rounded overflow-x-auto">
                     <pre className="text-xs whitespace-pre-wrap break-all">
@@ -236,16 +261,16 @@ export default function DashboardPage() {
                     </pre>
                   </div>
                 )}
-                
+
                 {execution.error_message && (
                   <div className="mt-2 text-sm text-red-500 bg-red-50 dark:bg-red-950 p-2 rounded">
                     {execution.error_message}
                   </div>
                 )}
-                
+
                 <div className="mt-2 text-xs text-muted-foreground">
-                  Duration: {execution.execution_time_ms 
-                    ? `${(execution.execution_time_ms / 1000).toFixed(1)}s` 
+                  Duration: {execution.execution_time_ms
+                    ? `${(execution.execution_time_ms / 1000).toFixed(1)}s`
                     : 'N/A'}
                   {execution.quality_score && ` | Quality: ${execution.quality_score}`}
                 </div>
@@ -257,20 +282,30 @@ export default function DashboardPage() {
 
       {/* Navigation to Results */}
       {isCompleted && (
-        <div className="flex gap-4">
-          <Button asChild className="flex-1">
+        <div className="flex flex-wrap gap-4">
+          <Button asChild className="flex-1 min-w-[200px]">
             <Link to="/data-engineering">
               View Data Engineering <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
-          <Button asChild className="flex-1" variant="outline">
+          <Button asChild className="flex-1 min-w-[200px]" variant="outline">
             <Link to="/statistics">
               View Statistics <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
-          <Button asChild className="flex-1" variant="outline">
+          <Button asChild className="flex-1 min-w-[200px]" variant="outline">
             <Link to="/ml-results">
               View ML Results <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+          <Button asChild className="flex-1 min-w-[200px]" variant="outline">
+            <Link to="/strategy">
+              View Strategy <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+          <Button asChild className="flex-1 min-w-[200px]" variant="outline">
+            <Link to="/report">
+              View Report <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
         </div>
