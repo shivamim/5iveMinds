@@ -8,12 +8,14 @@ import enum
 
 Base = declarative_base()
 
+
 class PipelineStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
 
 class AgentStatus(str, enum.Enum):
     PENDING = "pending"
@@ -22,19 +24,25 @@ class AgentStatus(str, enum.Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
 
+
 class ReportType(str, enum.Enum):
     EXECUTIVE = "executive"
     TECHNICAL = "technical"
     SUMMARY = "summary"
 
+
 class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    status = Column(Enum(PipelineStatus), default=PipelineStatus.QUEUED)
+    # FIXED: Added proper foreign key to dataset - this is the root cause of the bug
+    dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.id"), nullable=True)
+    dataset = relationship("Dataset", backref="pipeline_runs")
+    # Keep dataset_name for quick display without join
     dataset_name = Column(String(255))
     dataset_path = Column(Text)
     business_question = Column(Text)
+    status = Column(Enum(PipelineStatus), default=PipelineStatus.QUEUED)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
     total_time_ms = Column(Integer)
@@ -42,9 +50,16 @@ class PipelineRun(Base):
     created_by = Column(String(255))
     run_metadata = Column(JSON)
 
-    executions = relationship("AgentExecution", back_populates="pipeline_run", cascade="all, delete-orphan")
-    reports = relationship("Report", back_populates="pipeline_run", cascade="all, delete-orphan")
-    charts = relationship("Chart", back_populates="pipeline_run", cascade="all, delete-orphan")
+    executions = relationship(
+        "AgentExecution", back_populates="pipeline_run", cascade="all, delete-orphan"
+    )
+    reports = relationship(
+        "Report", back_populates="pipeline_run", cascade="all, delete-orphan"
+    )
+    charts = relationship(
+        "Chart", back_populates="pipeline_run", cascade="all, delete-orphan"
+    )
+
 
 class AgentExecution(Base):
     __tablename__ = "agent_executions"
@@ -62,6 +77,7 @@ class AgentExecution(Base):
 
     pipeline_run = relationship("PipelineRun", back_populates="executions")
 
+
 class Dataset(Base):
     __tablename__ = "datasets"
 
@@ -73,8 +89,12 @@ class Dataset(Base):
     column_count = Column(Integer)
     file_size_bytes = Column(Integer)
     schema = Column(JSON)
+    # FIXED: Store raw data summary for quick access without loading full dataframe
+    column_stats = Column(JSON)
+    sample_data = Column(JSON)
     uploaded_by = Column(String(255))
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class Report(Base):
     __tablename__ = "reports"
@@ -87,6 +107,7 @@ class Report(Base):
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
 
     pipeline_run = relationship("PipelineRun", back_populates="reports")
+
 
 class Chart(Base):
     __tablename__ = "charts"
