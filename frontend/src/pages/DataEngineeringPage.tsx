@@ -19,7 +19,7 @@ export default function DataEngineeringPage() {
     const loadData = async () => {
       // Only fetch if we don't already have data for this agent
       const existing = getAgentOutput('data_engineer')
-      if (existing) return
+      if (existing && Object.keys(existing).length > 0) return
 
       setFetching(true)
       try {
@@ -36,9 +36,24 @@ export default function DataEngineeringPage() {
     }
 
     loadData()
-  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+  }, [currentRun?.id])
 
-  const dataEngineerOutput = getAgentOutput('data_engineer')
+  const dataEngineerOutput = getAgentOutput('data_engineer') || {}
+
+  // CRITICAL FIX: Handle all possible data shapes from backend
+  // Backend now returns: schema, columns, imputation, outlier_details, quality_score
+  const schema = dataEngineerOutput.schema || {}
+  const columns = dataEngineerOutput.columns || Object.keys(schema)
+  const imputation = dataEngineerOutput.imputation || []
+  const outlierDetails = dataEngineerOutput.outlier_details || []
+  const qualityScore = dataEngineerOutput.quality_score ?? dataEngineerOutput.quality_checks?.completeness ?? null
+  const rowCount = dataEngineerOutput.row_count ?? 0
+  const columnCount = dataEngineerOutput.column_count ?? columns.length
+  const missingValuesPct = dataEngineerOutput.missing_values_pct ?? 0
+  const columnQuality = dataEngineerOutput.column_quality || []
+
+  // Check if we have any meaningful data
+  const hasData = columns.length > 0 || Object.keys(schema).length > 0 || qualityScore !== null
 
   if (!currentRun) {
     return (
@@ -50,7 +65,7 @@ export default function DataEngineeringPage() {
     )
   }
 
-  if (!dataEngineerOutput) {
+  if (!hasData) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Database className="w-12 h-12 text-muted-foreground animate-pulse" />
@@ -63,15 +78,6 @@ export default function DataEngineeringPage() {
       </div>
     )
   }
-
-  const schema = dataEngineerOutput.schema || {}
-  const columns = dataEngineerOutput.columns || Object.keys(schema)
-  const imputation = dataEngineerOutput.imputation || []
-  const outlierDetails = dataEngineerOutput.outlier_details || []
-  const qualityScore = dataEngineerOutput.quality_score
-  const rowCount = dataEngineerOutput.row_count
-  const columnCount = dataEngineerOutput.column_count
-  const missingValuesPct = dataEngineerOutput.missing_values_pct
 
   return (
     <div className="space-y-6">
@@ -110,39 +116,48 @@ export default function DataEngineeringPage() {
                 </Badge>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Column</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Null %</TableHead>
-                    <TableHead>Unique</TableHead>
-                    <TableHead>Sample</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {columns.map((col: string) => {
-                    const colSchema = schema[col] || {}
-                    return (
-                      <TableRow key={col}>
-                        <TableCell className="font-medium">{col}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="capitalize">
-                            {colSchema.type || 'unknown'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{colSchema.null_pct ?? 0}%</TableCell>
-                        <TableCell>{colSchema.unique_count ?? 'N/A'}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate">
-                          {Array.isArray(colSchema.sample_values)
-                            ? colSchema.sample_values.slice(0, 3).join(', ')
-                            : 'N/A'}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+              {columns.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+                  <Database className="h-8 w-8 opacity-50" />
+                  <p>No schema information available.</p>
+                  <p className="text-xs">The Data Engineer agent may still be processing your dataset.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Column</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Null %</TableHead>
+                      <TableHead>Unique</TableHead>
+                      <TableHead>Sample Values</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {columns.map((col: string) => {
+                      const colSchema = schema[col] || {}
+                      const colQuality = columnQuality.find((c: any) => c.column === col) || {}
+                      return (
+                        <TableRow key={col}>
+                          <TableCell className="font-medium">{col}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="capitalize">
+                              {colSchema.type || colQuality.type || 'unknown'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{colSchema.null_pct ?? colQuality.null_pct ?? 0}%</TableCell>
+                          <TableCell>{colSchema.unique_count ?? colQuality.unique_count ?? 'N/A'}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate">
+                            {Array.isArray(colSchema.sample_values)
+                              ? colSchema.sample_values.slice(0, 3).join(', ')
+                              : 'N/A'}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -159,7 +174,9 @@ export default function DataEngineeringPage() {
             <CardContent>
               {imputation.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No imputation was needed. All columns have complete data.
+                  <Wrench className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No imputation was needed. All columns have complete data.</p>
+                  <p className="text-xs mt-1">Missing values: {missingValuesPct}%</p>
                 </div>
               ) : (
                 <Table>
@@ -175,7 +192,7 @@ export default function DataEngineeringPage() {
                       <TableRow key={idx}>
                         <TableCell className="font-medium">{item.column}</TableCell>
                         <TableCell>
-                          <Badge variant="outline">{item.strategy}</Badge>
+                          <Badge variant="outline" className="capitalize">{item.strategy}</Badge>
                         </TableCell>
                         <TableCell>{item.filled_count || item.count || 0}</TableCell>
                       </TableRow>
@@ -199,7 +216,9 @@ export default function DataEngineeringPage() {
             <CardContent>
               {outlierDetails.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No outliers detected in the dataset.
+                  <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No outliers detected in the dataset.</p>
+                  <p className="text-xs mt-1">All numeric columns fall within expected ranges.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -223,6 +242,11 @@ export default function DataEngineeringPage() {
                               ? detail.values.slice(0, 10).join(', ')
                               : detail.values}
                           </div>
+                        )}
+                        {detail.note && (
+                          <p className="mt-2 text-xs text-muted-foreground bg-muted p-2 rounded">
+                            {detail.note}
+                          </p>
                         )}
                       </CardContent>
                     </Card>
