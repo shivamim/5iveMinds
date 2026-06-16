@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,16 +8,12 @@ import { Button } from '@/components/ui/button'
 import { FileText, FileUp, Download } from 'lucide-react'
 
 export default function ReportPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
 
-  // CRITICAL FIX: Fetch data independently so this page works even if user
-  // navigates directly via URL or refreshes
   useEffect(() => {
     if (!currentRun?.id) return
-
     const loadData = async () => {
-      // Check if we already have strategist data
       const existing = getAgentOutput('strategist')
       if (existing && Object.keys(existing).length > 0) return
 
@@ -34,38 +30,42 @@ export default function ReportPage() {
         setFetching(false)
       }
     }
-
     loadData()
-  }, [currentRun?.id])
+  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const strategyOutput = getAgentOutput('strategist') || {}
-  const dataQualityOutput = getAgentOutput('data_engineer') || {}
-  const statsOutput = getAgentOutput('statistician') || {}
-  const mlOutput = getAgentOutput('ml_engineer') || {}
+  const strategyOutput = useMemo(() => getAgentOutput('strategist') || {}, [agentExecutions, getAgentOutput])
+  const dataQualityOutput = useMemo(() => getAgentOutput('data_engineer') || {}, [agentExecutions, getAgentOutput])
+  const statsOutput = useMemo(() => getAgentOutput('statistician') || {}, [agentExecutions, getAgentOutput])
+  const mlOutput = useMemo(() => getAgentOutput('ml_engineer') || {}, [agentExecutions, getAgentOutput])
 
-  // CRITICAL FIX: Handle all possible data shapes from backend
   const executiveSummary = strategyOutput.executive_summary
     || (strategyOutput.business_insights?.[0] ? strategyOutput.business_insights[0] : '')
     || 'Analysis complete. Review the findings below.'
 
-  const keyFindings = strategyOutput.key_findings
-    || strategyOutput.business_insights
-    || []
+  const keyFindings = useMemo(() => {
+    const raw = strategyOutput.key_findings || strategyOutput.business_insights || []
+    return raw.map((item: any) => typeof item === 'string' ? item : item.description || item.text || JSON.stringify(item))
+  }, [strategyOutput])
 
-  const recommendations = strategyOutput.recommendations
-    || strategyOutput.recommended_actions
-    || []
+  const recommendations = useMemo(() => {
+    const raw = strategyOutput.recommendations || strategyOutput.recommended_actions || []
+    return raw.map((rec: any, i: number) => ({
+      title: rec.action || rec.recommendation || rec.title || `Recommendation ${i + 1}`,
+      description: rec.description || rec.reason || rec.impact || '',
+      priority: rec.priority || rec.urgency || 'Normal',
+      timeline: rec.timeline || rec.timeframe || 'TBD',
+      expected_outcome: rec.expected_outcome || rec.expected_impact || '',
+    }))
+  }, [strategyOutput])
 
-  const businessImpact = strategyOutput.business_impact
-    || strategyOutput.roi_projection
-    || {}
+  const businessImpact = strategyOutput.business_impact || strategyOutput.roi_projection || {}
 
-  const modelPerformance = strategyOutput.model_performance || {
-    best_model: mlOutput?.best_model,
-    r2: mlOutput?.best_r2,
-    rmse: mlOutput?.best_rmse,
-    quality_score: mlOutput?.quality_score
-  }
+  const modelPerformance = useMemo(() => ({
+    best_model: mlOutput?.best_model || 'N/A',
+    r2: mlOutput?.best_r2 ?? 'N/A',
+    rmse: mlOutput?.best_rmse ?? 'N/A',
+    quality_score: mlOutput?.quality_score ?? 'N/A',
+  }), [mlOutput])
 
   const hasStrategyData = strategyOutput && (
     strategyOutput.business_insights?.length > 0
@@ -89,9 +89,7 @@ export default function ReportPage() {
         <FileText className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Report...</h2>
         <p className="text-muted-foreground">
-          {fetching
-            ? 'Fetching results from server...'
-            : 'The Strategist is compiling the executive report.'}
+          {fetching ? 'Fetching results from server...' : 'The Strategist is compiling the executive report.'}
         </p>
       </div>
     )
@@ -102,26 +100,16 @@ export default function ReportPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Executive Report</h1>
-          <p className="text-muted-foreground">
-            Generated boardroom-ready analytics report
-          </p>
+          <p className="text-muted-foreground">Generated boardroom-ready analytics report</p>
           <p className="text-sm text-muted-foreground mt-1">
             Dataset: {currentRun.dataset_name} | Question: {currentRun.business_question}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" disabled>
-            <Download className="h-4 w-4 mr-1" /> PDF
-          </Button>
-          <Button variant="outline" size="sm" disabled>
-            <Download className="h-4 w-4 mr-1" /> Excel
-          </Button>
-          <Button variant="outline" size="sm" disabled>
-            <Download className="h-4 w-4 mr-1" /> PPTX
-          </Button>
-          <Button variant="outline" size="sm" disabled>
-            <Download className="h-4 w-4 mr-1" /> HTML
-          </Button>
+          <Button variant="outline" size="sm" disabled><Download className="h-4 w-4 mr-1" /> PDF</Button>
+          <Button variant="outline" size="sm" disabled><Download className="h-4 w-4 mr-1" /> Excel</Button>
+          <Button variant="outline" size="sm" disabled><Download className="h-4 w-4 mr-1" /> PPTX</Button>
+          <Button variant="outline" size="sm" disabled><Download className="h-4 w-4 mr-1" /> HTML</Button>
         </div>
       </div>
 
@@ -134,7 +122,6 @@ export default function ReportPage() {
           <TabsTrigger value="model">Model Performance</TabsTrigger>
         </TabsList>
 
-        {/* Summary Tab */}
         <TabsContent value="summary">
           <Card>
             <CardHeader>
@@ -145,7 +132,6 @@ export default function ReportPage() {
             </CardHeader>
             <CardContent>
               <p className="text-lg leading-relaxed">{executiveSummary}</p>
-
               <div className="mt-6 grid gap-4 md:grid-cols-3">
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="text-sm text-muted-foreground">Data Quality</div>
@@ -164,17 +150,14 @@ export default function ReportPage() {
           </Card>
         </TabsContent>
 
-        {/* Key Findings Tab */}
         <TabsContent value="findings">
           <Card>
-            <CardHeader>
-              <CardTitle>Key Findings</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Key Findings</CardTitle></CardHeader>
             <CardContent>
               {keyFindings.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No key findings available from the strategist agent.</p>
+                  <p>No key findings available.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -192,12 +175,9 @@ export default function ReportPage() {
           </Card>
         </TabsContent>
 
-        {/* Recommendations Tab */}
         <TabsContent value="recommendations">
           <Card>
-            <CardHeader>
-              <CardTitle>Strategic Recommendations</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Strategic Recommendations</CardTitle></CardHeader>
             <CardContent>
               {recommendations.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
@@ -210,17 +190,12 @@ export default function ReportPage() {
                     <Card key={idx} className="border-l-4 border-l-primary">
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-semibold">{rec.action || rec.recommendation || `Recommendation ${idx + 1}`}</h4>
-                          <Badge variant={
-                            (rec.priority || rec.urgency) === 'High' ? 'destructive' :
-                            (rec.priority || rec.urgency) === 'Medium' ? 'secondary' : 'outline'
-                          }>
-                            {rec.priority || rec.urgency || 'Normal'}
+                          <h4 className="font-semibold">{rec.title}</h4>
+                          <Badge variant={rec.priority === 'High' ? 'destructive' : rec.priority === 'Medium' ? 'secondary' : 'outline'}>
+                            {rec.priority}
                           </Badge>
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          Timeline: {rec.timeline || rec.timeframe || 'TBD'}
-                        </p>
+                        <p className="text-sm text-muted-foreground">Timeline: {rec.timeline}</p>
                         {rec.expected_outcome && (
                           <p className="mt-2 text-sm text-green-600">{rec.expected_outcome}</p>
                         )}
@@ -233,12 +208,9 @@ export default function ReportPage() {
           </Card>
         </TabsContent>
 
-        {/* Business Impact Tab */}
         <TabsContent value="impact">
           <Card>
-            <CardHeader>
-              <CardTitle>Business Impact & ROI</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Business Impact & ROI</CardTitle></CardHeader>
             <CardContent>
               {Object.keys(businessImpact).length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
@@ -267,29 +239,26 @@ export default function ReportPage() {
           </Card>
         </TabsContent>
 
-        {/* Model Performance Tab */}
         <TabsContent value="model">
           <Card>
-            <CardHeader>
-              <CardTitle>Model Performance</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Model Performance</CardTitle></CardHeader>
             <CardContent>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="text-sm text-muted-foreground">Best Model</div>
-                  <div className="text-xl font-bold">{modelPerformance.best_model || mlOutput?.best_model || 'N/A'}</div>
+                  <div className="text-xl font-bold">{modelPerformance.best_model}</div>
                 </div>
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="text-sm text-muted-foreground">R² Score</div>
-                  <div className="text-xl font-bold">{modelPerformance.r2 || mlOutput?.best_r2 || 'N/A'}</div>
+                  <div className="text-xl font-bold">{modelPerformance.r2}</div>
                 </div>
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="text-sm text-muted-foreground">RMSE</div>
-                  <div className="text-xl font-bold">{modelPerformance.rmse || mlOutput?.best_rmse || 'N/A'}</div>
+                  <div className="text-xl font-bold">{modelPerformance.rmse}</div>
                 </div>
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="text-sm text-muted-foreground">Quality Score</div>
-                  <div className="text-xl font-bold">{modelPerformance.quality_score || mlOutput?.quality_score || 'N/A'}</div>
+                  <div className="text-xl font-bold">{modelPerformance.quality_score}</div>
                 </div>
               </div>
             </CardContent>
