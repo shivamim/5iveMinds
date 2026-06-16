@@ -5,7 +5,6 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-
 class DesignerAgent(BaseAgent):
     """
     Designer Agent - Dynamically selects chart types based on
@@ -25,9 +24,9 @@ class DesignerAgent(BaseAgent):
 
         logger.info(f"Designer selecting charts for {len(columns)} columns")
 
-        # FIXED: Dynamically select charts based on actual data types
+        # FIXED: Pass strategy to _select_charts_dynamically
         chart_specs = self._select_charts_dynamically(
-            stats, ml, data_quality, columns, column_stats, schema
+            stats, ml, data_quality, columns, column_stats, schema, strategy
         )
 
         # Generate report sections based on actual analysis results
@@ -58,7 +57,7 @@ class DesignerAgent(BaseAgent):
 
     def _select_charts_dynamically(
         self, stats: dict, ml: dict, data_quality: dict,
-        columns: list, column_stats: dict, schema: dict
+        columns: list, column_stats: dict, schema: dict, strategy: dict  # FIXED: Added strategy parameter
     ) -> list:
         """Select chart types based on actual data characteristics."""
         chart_specs = []
