@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '@/stores/appStore'
+import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -6,14 +8,41 @@ import { Button } from '@/components/ui/button'
 import { FileText, FileUp, Download } from 'lucide-react'
 
 export default function ReportPage() {
-  const { getAgentOutput, currentRun } = useStore()
-  
-  // CRITICAL: Read from the store, not hardcoded data
+  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const [fetching, setFetching] = useState(false)
+
+  // CRITICAL FIX: Fetch data independently so this page works even if user
+  // navigates directly via URL or refreshes
+  useEffect(() => {
+    if (!currentRun?.id) return
+
+    const loadData = async () => {
+      // Check if we already have strategist data
+      const existing = getAgentOutput('strategist')
+      if (existing) return
+
+      setFetching(true)
+      try {
+        const res = await pipelineApi.getStatus(currentRun.id)
+        const executions = res.data?.executions ?? []
+        if (executions.length > 0) {
+          setAgentExecutions(executions)
+        }
+      } catch (err) {
+        console.error('Failed to fetch agent data:', err)
+      } finally {
+        setFetching(false)
+      }
+    }
+
+    loadData()
+  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+
   const strategyOutput = getAgentOutput('strategist')
   const dataQualityOutput = getAgentOutput('data_engineer')
   const statsOutput = getAgentOutput('statistician')
   const mlOutput = getAgentOutput('ml_engineer')
-  
+
   if (!currentRun) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -29,7 +58,11 @@ export default function ReportPage() {
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <FileText className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Report...</h2>
-        <p className="text-muted-foreground">The Strategist is compiling the executive report.</p>
+        <p className="text-muted-foreground">
+          {fetching
+            ? 'Fetching results from server...'
+            : 'The Strategist is compiling the executive report.'}
+        </p>
       </div>
     )
   }
@@ -47,7 +80,7 @@ export default function ReportPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-start">
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Executive Report</h1>
           <p className="text-muted-foreground">
@@ -57,7 +90,7 @@ export default function ReportPage() {
             Dataset: {currentRun.dataset_name} | Question: {currentRun.business_question}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" disabled>
             <Download className="h-4 w-4 mr-1" /> PDF
           </Button>
@@ -74,7 +107,7 @@ export default function ReportPage() {
       </div>
 
       <Tabs defaultValue="summary" className="space-y-4">
-        <TabsList>
+        <TabsList className="flex-wrap">
           <TabsTrigger value="summary">Summary</TabsTrigger>
           <TabsTrigger value="findings">Key Findings</TabsTrigger>
           <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
@@ -93,7 +126,7 @@ export default function ReportPage() {
             </CardHeader>
             <CardContent>
               <p className="text-lg leading-relaxed">{executiveSummary}</p>
-              
+
               <div className="mt-6 grid gap-4 md:grid-cols-3">
                 <div className="p-4 bg-muted rounded-lg">
                   <div className="text-sm text-muted-foreground">Data Quality</div>
