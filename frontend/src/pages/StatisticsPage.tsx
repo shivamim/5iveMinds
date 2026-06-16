@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,14 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BarChart, Activity, FlaskConical, FileUp } from 'lucide-react'
 
 export default function StatisticsPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
 
-  // CRITICAL FIX: Fetch data independently so this page works even if user
-  // navigates directly via URL or refreshes
   useEffect(() => {
     if (!currentRun?.id) return
-
     const loadData = async () => {
       const existing = getAgentOutput('statistician')
       if (existing && Object.keys(existing).length > 0) return
@@ -32,14 +29,11 @@ export default function StatisticsPage() {
         setFetching(false)
       }
     }
-
     loadData()
-  }, [currentRun?.id])
+  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const statisticianOutput = getAgentOutput('statistician') || {}
+  const statisticianOutput = useMemo(() => getAgentOutput('statistician') || {}, [agentExecutions, getAgentOutput])
 
-  // CRITICAL FIX: Handle all possible data shapes from backend
-  // Backend now returns: distributions[], correlations[], hypothesis_tests[], insights[]
   const distributions = statisticianOutput.distributions || []
   const correlations = statisticianOutput.correlations || []
   const hypothesisTests = statisticianOutput.hypothesis_tests || []
@@ -48,7 +42,6 @@ export default function StatisticsPage() {
   const numericColumns = statisticianOutput.numeric_columns ?? statisticianOutput.key_statistics?.numeric_columns ?? 0
   const significantCorrelations = statisticianOutput.significant_correlations ?? 0
 
-  // Check if we have meaningful data
   const hasData = distributions.length > 0 || correlations.length > 0 || hypothesisTests.length > 0 || insights.length > 0
 
   if (!currentRun) {
@@ -67,9 +60,7 @@ export default function StatisticsPage() {
         <Activity className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Statistician...</h2>
         <p className="text-muted-foreground">
-          {fetching
-            ? 'Fetching results from server...'
-            : 'The Statistician agent is analyzing distributions, correlations, and hypothesis tests.'}
+          {fetching ? 'Fetching results from server...' : 'The Statistician agent is analyzing distributions, correlations, and hypothesis tests.'}
         </p>
       </div>
     )
@@ -79,9 +70,7 @@ export default function StatisticsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Statistical Analysis</h1>
-        <p className="text-muted-foreground">
-          EDA, distributions, hypothesis testing, and correlation analysis
-        </p>
+        <p className="text-muted-foreground">EDA, distributions, hypothesis testing, and correlation analysis</p>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -100,7 +89,6 @@ export default function StatisticsPage() {
           <TabsTrigger value="hypothesis">Hypothesis Tests</TabsTrigger>
         </TabsList>
 
-        {/* Distribution Tab */}
         <TabsContent value="distribution" className="space-y-4">
           <Card>
             <CardHeader>
@@ -156,7 +144,6 @@ export default function StatisticsPage() {
           </Card>
         </TabsContent>
 
-        {/* Correlation Tab */}
         <TabsContent value="correlation" className="space-y-4">
           <Card>
             <CardHeader>
@@ -192,9 +179,7 @@ export default function StatisticsPage() {
                             p = {corr.p_value?.toFixed?.(4) ?? corr.p_value}
                           </Badge>
                         )}
-                        {corr.significant && (
-                          <Badge>Significant</Badge>
-                        )}
+                        {corr.significant && <Badge>Significant</Badge>}
                       </div>
                     </div>
                   ))}
@@ -204,7 +189,6 @@ export default function StatisticsPage() {
           </Card>
         </TabsContent>
 
-        {/* Hypothesis Tests Tab */}
         <TabsContent value="hypothesis" className="space-y-4">
           <Card>
             <CardHeader>
