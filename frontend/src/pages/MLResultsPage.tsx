@@ -1,199 +1,171 @@
 import { useStore } from '@/stores/appStore'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import {
-  FeatureImportanceChart,
-  ModelComparisonChart,
-  MetricsRadar,
-} from '@/components/charts'
-import { Trophy, FileQuestion } from 'lucide-react'
+import { Progress } from '@/components/ui/progress'
+import { Brain, Trophy, BarChart3, Zap, FileUp } from 'lucide-react'
 
-export function MLResultsPage() {
-  // FIXED: Read ml_engineer output from store instead of hardcoded data
-  const getAgentOutput = useStore((s) => s.getAgentOutput)
-  const agentExecutions = useStore((s) => s.agentExecutions)
-
+export default function MLResultsPage() {
+  const { getAgentOutput, currentRun } = useStore()
+  
+  // CRITICAL: Read from the store, not hardcoded data
   const mlOutput = getAgentOutput('ml_engineer')
-  const execution = agentExecutions.find((e) => e.agent_name === 'ml_engineer')
+  
+  if (!currentRun) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <FileUp className="w-12 h-12 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">No Pipeline Running</h2>
+        <p className="text-muted-foreground">Start an analysis from the Dashboard to see ML results.</p>
+      </div>
+    )
+  }
 
-  // Parse ML output
-  const bestModel = mlOutput?.best_model as
-    | { name: string; cv_score: number; accuracy: number; f1: number }
-    | null
-  const features = mlOutput?.feature_importance as
-    | Array<{ name: string; importance: number }>
-    | null
-  const models = mlOutput?.model_comparison as
-    | Array<{ model: string; accuracy: number; f1: number; cv: number }>
-    | null
-  const metrics = mlOutput?.metrics as
-    | Array<{ metric: string; value: number; fullMark: number }>
-    | null
-  const shapSummary = mlOutput?.shap_summary as
-    | Array<{ feature: string; mean_abs_shap: number }>
-    | null
+  if (!mlOutput) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <Brain className="w-12 h-12 text-muted-foreground animate-pulse" />
+        <h2 className="text-xl font-semibold">Waiting for ML Engineer...</h2>
+        <p className="text-muted-foreground">The ML Engineer is training and comparing models.</p>
+      </div>
+    )
+  }
 
-  const bestModelName = bestModel?.name ?? (mlOutput?.best_model_name as string) ?? null
-  const bestModelCv = bestModel?.cv_score ?? (mlOutput?.cv_score as number) ?? null
-  const bestModelAcc = bestModel?.accuracy ?? (mlOutput?.accuracy as number) ?? null
-  const bestModelF1 = bestModel?.f1 ?? (mlOutput?.f1_score as number) ?? null
+  const bestModel = mlOutput.best_model || 'N/A'
+  const bestR2 = mlOutput.best_r2
+  const bestRmse = mlOutput.best_rmse
+  const featureImportance = mlOutput.feature_importance || {}
+  const modelsEvaluated = mlOutput.models_evaluated || []
+  const qualityScore = mlOutput.quality_score
+  const shapSummary = mlOutput.shap_summary || {}
+
+  const features = Object.entries(featureImportance)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
+    .slice(0, 10)
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">ML Results</h1>
+        <h1 className="text-3xl font-bold tracking-tight">ML Results</h1>
         <p className="text-muted-foreground">
           AutoML model selection and SHAP explainability
         </p>
       </div>
 
-      {execution?.status === 'running' ? (
-        <Card>
-          <CardContent className="pt-6 text-center text-muted-foreground py-12">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            Training models and computing SHAP values...
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Best Model Card */}
+        <Card className="border-l-4 border-l-green-500">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trophy className="h-5 w-5 text-yellow-500" />
+              Best Model
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold mb-2">{bestModel}</div>
+            <div className="flex gap-2 mb-4">
+              <Badge variant="outline">R² = {bestR2 ?? 'N/A'}</Badge>
+              <Badge variant="outline">RMSE = {bestRmse ?? 'N/A'}</Badge>
+              <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Selected as the top-performing model across {modelsEvaluated.length} candidates.
+            </p>
           </CardContent>
         </Card>
-      ) : mlOutput ? (
-        <>
-          {bestModelName && (
-            <Card className="border-l-4 border-l-amber-500">
-              <CardContent className="p-6">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-full bg-amber-500/10">
-                    <Trophy className="h-6 w-6 text-amber-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Best Model</p>
-                    <p className="text-xl font-bold">{bestModelName}</p>
-                    <div className="flex gap-2 mt-1">
-                      {bestModelCv !== null && (
-                        <Badge variant="outline">CV: {bestModelCv}</Badge>
-                      )}
-                      {bestModelAcc !== null && (
-                        <Badge variant="outline">Acc: {bestModelAcc}</Badge>
-                      )}
-                      {bestModelF1 !== null && (
-                        <Badge variant="outline">F1: {bestModelF1}</Badge>
-                      )}
+
+        {/* Feature Importance */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5" />
+              Feature Importance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {features.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                No feature importance data available.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {features.map(([name, importance], idx) => {
+                  const pct = (importance as number) * 100
+                  return (
+                    <div key={name}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="font-medium">{name}</span>
+                        <span>{pct.toFixed(1)}%</span>
+                      </div>
+                      <Progress value={pct} className="h-2" />
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Model Comparison */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5" />
+              Model Comparison
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {modelsEvaluated.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                No model comparison data available.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {modelsEvaluated.map((model: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                    <div>
+                      <span className="font-medium">{model.name}</span>
+                      <p className="text-xs text-muted-foreground">{model.reason || model.suitable_for || ''}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Badge variant="outline">R²={model.r2 ?? 'N/A'}</Badge>
+                      <Badge variant="outline">RMSE={model.rmse ?? 'N/A'}</Badge>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {features && features.length > 0 ? (
-              <FeatureImportanceChart data={features} />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Feature Importance</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <EmptyState message="No feature importance data available." />
-                </CardContent>
-              </Card>
+                ))}
+              </div>
             )}
-            {models && models.length > 0 ? (
-              <ModelComparisonChart data={models} />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Model Comparison</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <EmptyState message="No model comparison data available." />
-                </CardContent>
-              </Card>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {metrics && metrics.length > 0 ? (
-              <MetricsRadar data={metrics} />
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Metrics</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <EmptyState message="No metrics data available." />
-                </CardContent>
-              </Card>
-            )}
-            <Card>
-              <CardHeader>
-                <CardTitle>SHAP Summary</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {shapSummary && shapSummary.length > 0 ? (
-                  <div className="space-y-2">
-                    {shapSummary.map((f, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <span className="text-sm font-mono w-32 truncate">
-                          {f.feature}
-                        </span>
-                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary rounded-full"
-                            style={{
-                              width: `${(f.mean_abs_shap / (shapSummary[0]?.mean_abs_shap ?? 1)) * 100}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-xs text-muted-foreground w-12 text-right">
-                          {f.mean_abs_shap.toFixed(3)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : features && features.length > 0 ? (
-                  // Fallback to feature importance if SHAP summary not in expected format
-                  <div className="space-y-2">
-                    {features.slice(0, 5).map((f, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <span className="text-sm font-mono w-32 truncate">
-                          {f.name}
-                        </span>
-                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary rounded-full"
-                            style={{
-                              width: `${(f.importance / (features[0]?.importance ?? 1)) * 100}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-xs text-muted-foreground w-12 text-right">
-                          {f.importance.toFixed(3)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <EmptyState message="No SHAP summary available from the ML Engineer agent." />
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </>
-      ) : (
-        <Card>
-          <CardContent className="pt-6">
-            <EmptyState message="Run a pipeline to see ML results. The ML Engineer agent trains 5 models, selects the best one, and computes SHAP feature importance for your dataset." />
           </CardContent>
         </Card>
-      )}
-    </div>
-  )
-}
 
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-8">
-      <FileQuestion className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-50" />
-      <p className="text-muted-foreground max-w-md mx-auto">{message}</p>
+        {/* SHAP Summary */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5" />
+              SHAP Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {Object.keys(shapSummary).length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                No SHAP summary available from the ML Engineer agent.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(shapSummary).map(([feature, data]: [string, any]) => (
+                  <div key={feature} className="flex justify-between items-center p-2 bg-muted rounded">
+                    <span className="font-medium">{feature}</span>
+                    <div className="flex gap-2 text-sm">
+                      <span className="text-green-500">+{data.positive?.toFixed?.(3) ?? data.positive ?? 0}</span>
+                      <span className="text-red-500">{data.negative?.toFixed?.(3) ?? data.negative ?? 0}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
