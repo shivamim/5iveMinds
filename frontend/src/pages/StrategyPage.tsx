@@ -1,15 +1,44 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '@/stores/appStore'
+import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Lightbulb, Target, ListTodo, Shield, FileUp } from 'lucide-react'
+// FIX: All imports are now at the top of the file (was at bottom causing syntax error)
+import { Lightbulb, Target, ListTodo, Shield, AlertTriangle, ShieldAlert, FileUp, BarChart3 } from 'lucide-react'
 
 export default function StrategyPage() {
-  const { getAgentOutput, currentRun } = useStore()
-  
-  // CRITICAL: Read from the store, not hardcoded data
+  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const [fetching, setFetching] = useState(false)
+
+  // CRITICAL FIX: Fetch data independently so this page works even if user
+  // navigates directly via URL or refreshes
+  useEffect(() => {
+    if (!currentRun?.id) return
+
+    const loadData = async () => {
+      const existing = getAgentOutput('strategist')
+      if (existing) return
+
+      setFetching(true)
+      try {
+        const res = await pipelineApi.getStatus(currentRun.id)
+        const executions = res.data?.executions ?? []
+        if (executions.length > 0) {
+          setAgentExecutions(executions)
+        }
+      } catch (err) {
+        console.error('Failed to fetch agent data:', err)
+      } finally {
+        setFetching(false)
+      }
+    }
+
+    loadData()
+  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+
   const strategyOutput = getAgentOutput('strategist')
-  
+
   if (!currentRun) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -25,7 +54,11 @@ export default function StrategyPage() {
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Lightbulb className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Strategist...</h2>
-        <p className="text-muted-foreground">The Strategist is generating business insights and recommendations.</p>
+        <p className="text-muted-foreground">
+          {fetching
+            ? 'Fetching results from server...'
+            : 'The Strategist is generating business insights and recommendations.'}
+        </p>
       </div>
     )
   }
@@ -57,7 +90,7 @@ export default function StrategyPage() {
         </p>
       </div>
 
-      <div className="flex gap-2 mb-4">
+      <div className="flex flex-wrap gap-2 mb-4">
         <Badge variant="outline">{insights.length} insights</Badge>
         <Badge variant="outline">{actions.length} actions</Badge>
         <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
@@ -174,7 +207,7 @@ export default function StrategyPage() {
             <Card className="border-l-4 border-l-yellow-500">
               <CardHeader>
                 <CardTitle className="text-yellow-600 flex items-center gap-2">
-                  <Shield className="h-5 w-5" />
+                  <AlertTriangle className="h-5 w-5" />
                   Weaknesses
                 </CardTitle>
               </CardHeader>
@@ -218,7 +251,7 @@ export default function StrategyPage() {
             <Card className="border-l-4 border-l-red-500">
               <CardHeader>
                 <CardTitle className="text-red-600 flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5" />
+                  <ShieldAlert className="h-5 w-5" />
                   Threats
                 </CardTitle>
               </CardHeader>
@@ -266,7 +299,7 @@ export default function StrategyPage() {
               {scenarios.best_case && (
                 <div className="mt-4 p-3 bg-muted rounded-lg">
                   <h4 className="font-semibold mb-2">Scenario Multipliers</h4>
-                  <div className="flex gap-4 text-sm">
+                  <div className="flex flex-wrap gap-4 text-sm">
                     <span>Best: <Badge variant="default">{scenarios.best_case}x</Badge></span>
                     <span>Base: <Badge variant="secondary">{scenarios.base_case}x</Badge></span>
                     <span>Worst: <Badge variant="outline">{scenarios.worst_case}x</Badge></span>
@@ -319,6 +352,3 @@ export default function StrategyPage() {
     </div>
   )
 }
-
-// Need to import this for the SWOT tab
-import { AlertTriangle, ShieldAlert } from 'lucide-react'
