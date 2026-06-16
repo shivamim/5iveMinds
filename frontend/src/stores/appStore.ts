@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { PipelineRun, Dataset, AgentInfo, Theme } from '@/types'
+import { PipelineRun, Dataset, AgentInfo, AgentExecution, Theme } from '@/types'
 
 interface AppState {
   // Theme
@@ -9,6 +9,12 @@ interface AppState {
   // Pipeline
   currentRun: PipelineRun | null
   setCurrentRun: (run: PipelineRun | null) => void
+
+  // Agent Executions - populated from DashboardPage polling
+  agentExecutions: AgentExecution[]
+  setAgentExecutions: (executions: AgentExecution[]) => void
+  // Helper to get output_data for a specific agent
+  getAgentOutput: (agentName: string) => Record<string, unknown> | null
 
   // Datasets
   datasets: Dataset[]
@@ -30,7 +36,7 @@ interface AppState {
   setIsAuthenticated: (auth: boolean) => void
 }
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
   theme: 'dark',
   setTheme: (theme) => {
     set({ theme })
@@ -43,6 +49,17 @@ export const useStore = create<AppState>((set) => ({
 
   currentRun: null,
   setCurrentRun: (run) => set({ currentRun: run }),
+
+  // Agent executions from the pipeline - populated by DashboardPage
+  agentExecutions: [],
+  setAgentExecutions: (executions) => set({ agentExecutions: executions }),
+  getAgentOutput: (agentName) => {
+    const executions = get().agentExecutions
+    const execution = executions.find(
+      (e) => e.agent_name === agentName && e.status === 'completed' && e.output_data
+    )
+    return execution?.output_data ?? null
+  },
 
   datasets: [],
   setDatasets: (datasets) => set({ datasets }),
