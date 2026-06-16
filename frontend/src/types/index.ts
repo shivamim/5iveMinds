@@ -2,6 +2,8 @@ export interface PipelineRun {
   id: string
   status: 'queued' | 'running' | 'completed' | 'failed'
   business_question: string
+  // FIXED: Added dataset_id to track which dataset was used
+  dataset_id?: string
   dataset_name: string
   started_at?: string
   completed_at?: string
