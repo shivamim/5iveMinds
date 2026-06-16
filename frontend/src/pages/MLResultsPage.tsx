@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,14 +7,11 @@ import { Progress } from '@/components/ui/progress'
 import { Brain, Trophy, BarChart3, Zap, FileUp } from 'lucide-react'
 
 export default function MLResultsPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
 
-  // CRITICAL FIX: Fetch data independently so this page works even if user
-  // navigates directly via URL or refreshes
   useEffect(() => {
     if (!currentRun?.id) return
-
     const loadData = async () => {
       const existing = getAgentOutput('ml_engineer')
       if (existing && Object.keys(existing).length > 0) return
@@ -32,27 +29,31 @@ export default function MLResultsPage() {
         setFetching(false)
       }
     }
-
     loadData()
-  }, [currentRun?.id])
+  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const mlOutput = getAgentOutput('ml_engineer') || {}
+  const mlOutput = useMemo(() => getAgentOutput('ml_engineer') || {}, [agentExecutions, getAgentOutput])
 
-  // CRITICAL FIX: Handle all possible data shapes from backend
+  const designerOutput = useMemo(() => getAgentOutput('designer') || {}, [agentExecutions, getAgentOutput])
+  const designerFeatureImportance = useMemo(() => {
+    const specs = designerOutput?.chart_specs || []
+    const fiSpec = specs.find((s: any) => s.type === 'feature_importance')
+    return fiSpec?.data || null
+  }, [designerOutput])
+
   const bestModel = mlOutput.best_model || 'N/A'
   const bestR2 = mlOutput.best_r2
   const bestRmse = mlOutput.best_rmse
-  const featureImportance = mlOutput.feature_importance || {}
+  const featureImportance = mlOutput.feature_importance || designerFeatureImportance || {}
   const modelsEvaluated = mlOutput.models_evaluated || []
   const qualityScore = mlOutput.quality_score
-  const shapSummary = mlOutput.shap_summary || {}
+  const shapSummary = mlOutput.shap_summary || mlOutput.shap_values || {}
 
   const features = Object.entries(featureImportance)
     .sort(([, a], [, b]) => (b as number) - (a as number))
     .slice(0, 10)
 
-  // Check if we have meaningful data
-  const hasData = bestModel !== 'N/A' || features.length > 0 || modelsEvaluated.length > 0
+  const hasData = bestModel !== 'N/A' || features.length > 0 || modelsEvaluated.length > 0 || Object.keys(shapSummary).length > 0
 
   if (!currentRun) {
     return (
@@ -70,9 +71,7 @@ export default function MLResultsPage() {
         <Brain className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for ML Engineer...</h2>
         <p className="text-muted-foreground">
-          {fetching
-            ? 'Fetching results from server...'
-            : 'The ML Engineer is training and comparing models.'}
+          {fetching ? 'Fetching results from server...' : 'The ML Engineer is training and comparing models.'}
         </p>
       </div>
     )
@@ -82,13 +81,10 @@ export default function MLResultsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">ML Results</h1>
-        <p className="text-muted-foreground">
-          AutoML model selection and SHAP explainability
-        </p>
+        <p className="text-muted-foreground">AutoML model selection and SHAP explainability</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Best Model Card */}
         <Card className="border-l-4 border-l-green-500">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -104,12 +100,11 @@ export default function MLResultsPage() {
               <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              Selected as the top-performing model across {modelsEvaluated.length} candidates.
+              Selected as the top-performing model across {modelsEvaluated.length || 1} candidates.
             </p>
           </CardContent>
         </Card>
 
-        {/* Feature Importance */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -142,7 +137,6 @@ export default function MLResultsPage() {
           </CardContent>
         </Card>
 
-        {/* Model Comparison */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -175,7 +169,6 @@ export default function MLResultsPage() {
           </CardContent>
         </Card>
 
-        {/* SHAP Summary */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
