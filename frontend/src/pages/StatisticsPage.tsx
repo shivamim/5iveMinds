@@ -17,7 +17,7 @@ export default function StatisticsPage() {
 
     const loadData = async () => {
       const existing = getAgentOutput('statistician')
-      if (existing) return
+      if (existing && Object.keys(existing).length > 0) return
 
       setFetching(true)
       try {
@@ -34,9 +34,22 @@ export default function StatisticsPage() {
     }
 
     loadData()
-  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+  }, [currentRun?.id])
 
-  const statisticianOutput = getAgentOutput('statistician')
+  const statisticianOutput = getAgentOutput('statistician') || {}
+
+  // CRITICAL FIX: Handle all possible data shapes from backend
+  // Backend now returns: distributions[], correlations[], hypothesis_tests[], insights[]
+  const distributions = statisticianOutput.distributions || []
+  const correlations = statisticianOutput.correlations || []
+  const hypothesisTests = statisticianOutput.hypothesis_tests || []
+  const insights = statisticianOutput.insights || []
+  const qualityScore = statisticianOutput.quality_score
+  const numericColumns = statisticianOutput.numeric_columns ?? statisticianOutput.key_statistics?.numeric_columns ?? 0
+  const significantCorrelations = statisticianOutput.significant_correlations ?? 0
+
+  // Check if we have meaningful data
+  const hasData = distributions.length > 0 || correlations.length > 0 || hypothesisTests.length > 0 || insights.length > 0
 
   if (!currentRun) {
     return (
@@ -48,7 +61,7 @@ export default function StatisticsPage() {
     )
   }
 
-  if (!statisticianOutput) {
+  if (!hasData) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Activity className="w-12 h-12 text-muted-foreground animate-pulse" />
@@ -61,13 +74,6 @@ export default function StatisticsPage() {
       </div>
     )
   }
-
-  const distributions = statisticianOutput.distributions || []
-  const correlations = statisticianOutput.correlations || []
-  const hypothesisTests = statisticianOutput.hypothesis_tests || []
-  const qualityScore = statisticianOutput.quality_score
-  const numericColumns = statisticianOutput.numeric_columns || 0
-  const significantCorrelations = statisticianOutput.significant_correlations || 0
 
   return (
     <div className="space-y-6">
@@ -106,7 +112,8 @@ export default function StatisticsPage() {
             <CardContent>
               {distributions.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No distribution data available from the statistician agent.
+                  <BarChart className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No distribution data available from the statistician agent.</p>
                 </div>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2">
@@ -161,7 +168,8 @@ export default function StatisticsPage() {
             <CardContent>
               {correlations.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No correlations found in the dataset.
+                  <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No correlations found in the dataset.</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -208,7 +216,8 @@ export default function StatisticsPage() {
             <CardContent>
               {hypothesisTests.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No hypothesis tests were run by the statistician agent.
+                  <FlaskConical className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No hypothesis tests were run by the statistician agent.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
