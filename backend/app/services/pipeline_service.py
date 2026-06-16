@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 from fastapi import HTTPException
@@ -6,7 +7,13 @@ from datetime import datetime
 import uuid
 import time
 
-from app.models import PipelineRun, AgentExecution, PipelineStatus, AgentStatus, Dataset
+from app.models import (
+    PipelineRun,
+    AgentExecution,
+    PipelineStatus,
+    AgentStatus,
+    Dataset,
+)
 from app.schemas import PipelineRunCreate, PipelineStatusResponse
 from app.core.orchestrator import Orchestrator
 from app.core.message_board import MessageBoard
@@ -16,6 +23,9 @@ from app.core.agents.ml_engineer import MLEngineerAgent
 from app.core.agents.strategist import StrategistAgent
 from app.core.agents.designer import DesignerAgent
 from app.services.websocket_manager import WebSocketManager
+from app.services.dataset_service import DatasetService
+
+logger = logging.getLogger(__name__)
 
 AGENT_PIPELINE = [
     ("data_engineer", DataEngineerAgent),
@@ -31,8 +41,11 @@ class PipelineService:
         self.db = db
 
     async def create_run(self, request: PipelineRunCreate) -> PipelineRun:
-        # Resolve dataset name
+        """Create a new pipeline run linked to the dataset by UUID."""
         dataset_name = str(request.dataset_id)
+        dataset_id = request.dataset_id
+
+        # FIXED: Lookup dataset and store BOTH id and name
         try:
             result = await self.db.execute(
                 select(Dataset).where(Dataset.id == request.dataset_id)
@@ -40,53 +53,128 @@ class PipelineService:
             ds = result.scalar_one_or_none()
             if ds:
                 dataset_name = ds.filename
-        except Exception:
-            pass
+                logger.info(
+                    f"Pipeline run creating for dataset {ds.id} ({ds.filename}) "
+                    f"with {ds.row_count} rows, {ds.column_count} columns"
+                )
+            else:
+                logger.warning(
+                    f"Dataset {request.dataset_id} not found when creating pipeline run"
+                )
+                raise HTTPException(404, f"Dataset {request.dataset_id} not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to lookup dataset for pipeline run: {e}", exc_info=True)
+            raise HTTPException(500, f"Failed to lookup dataset: {e}")
 
+        # FIXED: Store dataset_id (UUID) for reliable lookup during execution
         run = PipelineRun(
+            dataset_id=dataset_id,
             dataset_name=dataset_name,
             business_question=request.business_question,
             status=PipelineStatus.QUEUED,
-            run_metadata={"hitl_agents": request.hitl_agents, "custom_config": request.custom_config}
+            run_metadata={
+                "hitl_agents": request.hitl_agents,
+                "custom_config": request.custom_config,
+            },
         )
         self.db.add(run)
         await self.db.commit()
         await self.db.refresh(run)
+        logger.info(f"Pipeline run {run.id} created for dataset {dataset_id}")
         return run
 
-    async def execute_pipeline_with_session(self, run_id: uuid.UUID, ws_manager: WebSocketManager, session_maker: async_sessionmaker):
+    async def execute_pipeline_with_session(
+        self,
+        run_id: uuid.UUID,
+        ws_manager: WebSocketManager,
+        session_maker: async_sessionmaker,
+    ):
         """Create a fresh DB session for the background task and run the pipeline."""
         async with session_maker() as db:
             self.db = db
             await self.execute_pipeline(run_id, ws_manager)
 
-    async def execute_pipeline(self, run_id: uuid.UUID, ws_manager: WebSocketManager):
+    async def execute_pipeline(
+        self, run_id: uuid.UUID, ws_manager: WebSocketManager
+    ):
+        """Execute the full agent pipeline with proper dataset loading."""
         start_time = time.time()
         board = MessageBoard()
 
-        # Load dataset context onto message board
+        # FIXED: Load dataset context onto message board using dataset_id (UUID)
+        # NOT filename - this was the root cause of the "same output" bug
         try:
-            result = await self.db.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+            result = await self.db.execute(
+                select(PipelineRun).where(PipelineRun.id == run_id)
+            )
             run = result.scalar_one_or_none()
-            if run:
+
+            if not run:
+                logger.error(f"Pipeline run {run_id} not found")
+                raise HTTPException(404, f"Pipeline run {run_id} not found")
+
+            if run.dataset_id:
+                # FIXED: Use dataset_id (UUID) for reliable lookup
                 ds_result = await self.db.execute(
-                    select(Dataset).where(Dataset.filename == run.dataset_name)
+                    select(Dataset).where(Dataset.id == run.dataset_id)
                 )
                 ds = ds_result.scalar_one_or_none()
-                if ds:
-                    board.post("dataset", {
-                        "filename": ds.filename,
-                        "row_count": ds.row_count,
-                        "columns": list((ds.schema or {}).keys()),
-                    })
-        except Exception:
-            pass
 
+                if ds:
+                    schema = ds.schema or {}
+                    columns = list(schema.keys())
+
+                    # FIXED: Pass FULL schema info to board so agents can do real analysis
+                    board.post(
+                        "dataset",
+                        {
+                            "id": str(ds.id),
+                            "filename": ds.filename,
+                            "row_count": ds.row_count,
+                            "column_count": ds.column_count,
+                            "columns": columns,
+                            "schema": schema,
+                            # Include column stats for real analysis
+                            "column_stats": ds.column_stats or {},
+                            # Include sample data for context-aware insights
+                            "sample_data": ds.sample_data or [],
+                        },
+                    )
+                    logger.info(
+                        f"Loaded dataset {ds.id} ({ds.filename}) onto board: "
+                        f"{ds.row_count} rows, {len(columns)} columns"
+                    )
+                else:
+                    logger.error(
+                        f"Dataset {run.dataset_id} linked to run {run_id} not found in DB"
+                    )
+                    raise HTTPException(
+                        404,
+                        f"Dataset {run.dataset_id} not found",
+                    )
+            else:
+                logger.error(f"Pipeline run {run_id} has no dataset_id linked")
+                raise HTTPException(400, "No dataset linked to pipeline run")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Failed to load dataset for pipeline run {run_id}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(500, f"Failed to load dataset: {e}")
+
+        # Update run status to running
         await self.db.execute(
-            update(PipelineRun).where(PipelineRun.id == run_id)
+            update(PipelineRun)
+            .where(PipelineRun.id == run_id)
             .values(status=PipelineStatus.RUNNING, started_at=datetime.utcnow())
         )
         await self.db.commit()
+        logger.info(f"Pipeline run {run_id} started")
 
         quality_scores = []
 
@@ -97,31 +185,40 @@ class PipelineService:
                 pipeline_run_id=run_id,
                 agent_name=agent_name,
                 status=AgentStatus.RUNNING,
-                started_at=datetime.utcnow()
+                started_at=datetime.utcnow(),
             )
             self.db.add(execution)
             await self.db.commit()
             await self.db.refresh(execution)
 
-            await ws_manager.broadcast(run_id, {
-                "type": "agent_started",
-                "agent_name": agent_name,
-                "message": f"{agent_name} started"
-            })
+            await ws_manager.broadcast(
+                run_id,
+                {
+                    "type": "agent_started",
+                    "agent_name": agent_name,
+                    "message": f"{agent_name} started",
+                },
+            )
 
             try:
                 agent = AgentClass(board)
+                # Progress updates
                 for p in [0.25, 0.5, 0.75]:
                     await asyncio.sleep(0.3)
-                    await ws_manager.broadcast(run_id, {
-                        "type": "agent_progress",
-                        "agent_name": agent_name,
-                        "progress": p,
-                        "message": f"{agent_name} {int(p*100)}%"
-                    })
+                    await ws_manager.broadcast(
+                        run_id,
+                        {
+                            "type": "agent_progress",
+                            "agent_name": agent_name,
+                            "progress": p,
+                            "message": f"{agent_name} {int(p * 100)}%",
+                        },
+                    )
 
                 result_data = await agent.execute()
-                quality_score = result_data.get("quality_score", 85.0)
+
+                # FIXED: Quality score based on actual work done, not random
+                quality_score = self._calculate_quality_score(agent_name, result_data)
                 exec_time = int((time.time() - exec_start) * 1000)
 
                 execution.status = AgentStatus.COMPLETED
@@ -131,49 +228,128 @@ class PipelineService:
                 execution.completed_at = datetime.utcnow()
                 quality_scores.append(quality_score)
 
-                await ws_manager.broadcast(run_id, {
-                    "type": "agent_completed",
-                    "agent_name": agent_name,
-                    "quality_score": quality_score,
-                    "message": f"{agent_name} completed — quality {quality_score}"
-                })
+                await ws_manager.broadcast(
+                    run_id,
+                    {
+                        "type": "agent_completed",
+                        "agent_name": agent_name,
+                        "quality_score": quality_score,
+                        "message": f"{agent_name} completed — quality {quality_score}",
+                    },
+                )
+                logger.info(
+                    f"Agent {agent_name} completed for run {run_id} "
+                    f"in {exec_time}ms with quality {quality_score}"
+                )
 
             except Exception as e:
+                logger.error(f"Agent {agent_name} failed for run {run_id}: {e}", exc_info=True)
                 execution.status = AgentStatus.FAILED
                 execution.error_message = str(e)
                 execution.completed_at = datetime.utcnow()
 
-                await ws_manager.broadcast(run_id, {
-                    "type": "agent_failed",
-                    "agent_name": agent_name,
-                    "message": f"{agent_name} failed: {str(e)}"
-                })
+                await ws_manager.broadcast(
+                    run_id,
+                    {
+                        "type": "agent_failed",
+                        "agent_name": agent_name,
+                        "message": f"{agent_name} failed: {str(e)}",
+                    },
+                )
 
             await self.db.commit()
 
         total_time = int((time.time() - start_time) * 1000)
-        avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
+        avg_quality = (
+            sum(quality_scores) / len(quality_scores) if quality_scores else 0
+        )
 
         await self.db.execute(
-            update(PipelineRun).where(PipelineRun.id == run_id)
+            update(PipelineRun)
+            .where(PipelineRun.id == run_id)
             .values(
                 status=PipelineStatus.COMPLETED,
                 completed_at=datetime.utcnow(),
                 total_time_ms=total_time,
-                quality_score_avg=avg_quality
+                quality_score_avg=avg_quality,
             )
         )
         await self.db.commit()
 
-        await ws_manager.broadcast(run_id, {
-            "type": "pipeline_completed",
-            "quality_score_avg": avg_quality,
-            "total_time_ms": total_time,
-            "message": "Pipeline completed"
-        })
+        logger.info(
+            f"Pipeline run {run_id} completed in {total_time}ms "
+            f"with avg quality {avg_quality:.1f}"
+        )
+
+        await ws_manager.broadcast(
+            run_id,
+            {
+                "type": "pipeline_completed",
+                "quality_score_avg": avg_quality,
+                "total_time_ms": total_time,
+                "message": "Pipeline completed",
+            },
+        )
+
+    def _calculate_quality_score(self, agent_name: str, result_data: dict) -> float:
+        """Calculate quality score based on actual analysis depth, not random."""
+        base_score = 75.0
+
+        if agent_name == "data_engineer":
+            # Score based on coverage of columns analyzed
+            columns_analyzed = result_data.get("columns_analyzed", 0)
+            schema_inferred = result_data.get("schema_inferred", False)
+            quality_checks = result_data.get("quality_checks", {})
+            score = base_score
+            if schema_inferred:
+                score += 10
+            score += min(columns_analyzed * 2, 10)
+            if quality_checks:
+                score += 5
+            return round(min(score, 98), 1)
+
+        elif agent_name == "statistician":
+            correlations = result_data.get("correlations", [])
+            insights = result_data.get("insights", [])
+            score = base_score
+            score += min(len(correlations) * 3, 15)
+            score += min(len(insights) * 2, 10)
+            return round(min(score, 98), 1)
+
+        elif agent_name == "ml_engineer":
+            models = result_data.get("models_evaluated", [])
+            feature_importance = result_data.get("feature_importance", {})
+            score = base_score
+            score += min(len(models) * 3, 15)
+            if feature_importance:
+                score += 10
+            return round(min(score, 98), 1)
+
+        elif agent_name == "strategist":
+            insights = result_data.get("business_insights", [])
+            actions = result_data.get("recommended_actions", [])
+            llm_powered = result_data.get("llm_powered", False)
+            score = base_score
+            score += min(len(insights) * 2, 10)
+            score += min(len(actions) * 2, 10)
+            if llm_powered:
+                score += 5
+            return round(min(score, 98), 1)
+
+        elif agent_name == "designer":
+            charts = result_data.get("chart_specs", [])
+            score = base_score
+            score += min(len(charts) * 3, 15)
+            if result_data.get("report_generated"):
+                score += 10
+            return round(min(score, 98), 1)
+
+        return round(base_score, 1)
 
     async def get_status(self, run_id: uuid.UUID) -> PipelineStatusResponse:
-        result = await self.db.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+        result = await self.db.execute(
+            select(PipelineRun).where(PipelineRun.id == run_id)
+        )
         run = result.scalar_one_or_none()
         if not run:
             raise HTTPException(404, "Pipeline run not found")
@@ -187,10 +363,14 @@ class PipelineService:
         total = max(len(executions), 5)
         progress = (completed / total) * 100
 
-        return PipelineStatusResponse(run=run, executions=list(executions), progress_percent=progress)
+        return PipelineStatusResponse(
+            run=run, executions=list(executions), progress_percent=progress
+        )
 
     async def get_results(self, run_id: uuid.UUID):
-        result = await self.db.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+        result = await self.db.execute(
+            select(PipelineRun).where(PipelineRun.id == run_id)
+        )
         run = result.scalar_one_or_none()
         if not run:
             raise HTTPException(404, "Pipeline run not found")
@@ -204,6 +384,7 @@ class PipelineService:
             "run": {
                 "id": str(run.id),
                 "status": run.status.value,
+                "dataset_id": str(run.dataset_id) if run.dataset_id else None,
                 "dataset_name": run.dataset_name,
                 "business_question": run.business_question,
                 "quality_score_avg": run.quality_score_avg,
@@ -211,7 +392,7 @@ class PipelineService:
             },
             "executions": {e.agent_name: e.output_data for e in executions},
             "charts": [],
-            "reports": []
+            "reports": [],
         }
 
     async def get_logs(self, run_id: uuid.UUID):
@@ -226,20 +407,26 @@ class PipelineService:
                 "quality": e.quality_score,
                 "error": e.error_message,
                 "started": e.started_at.isoformat() if e.started_at else None,
-                "completed": e.completed_at.isoformat() if e.completed_at else None,
+                "completed": (
+                    e.completed_at.isoformat() if e.completed_at else None
+                ),
             }
             for e in executions
         ]
 
     async def get_history(self, limit: int, offset: int):
         result = await self.db.execute(
-            select(PipelineRun).order_by(PipelineRun.started_at.desc())
-            .offset(offset).limit(limit)
+            select(PipelineRun)
+            .order_by(PipelineRun.started_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
         return result.scalars().all()
 
     async def delete_run(self, run_id: uuid.UUID):
-        result = await self.db.execute(select(PipelineRun).where(PipelineRun.id == run_id))
+        result = await self.db.execute(
+            select(PipelineRun).where(PipelineRun.id == run_id)
+        )
         run = result.scalar_one_or_none()
         if not run:
             raise HTTPException(404, "Pipeline run not found")
