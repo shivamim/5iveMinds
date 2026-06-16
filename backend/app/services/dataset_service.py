@@ -1,69 +1,191 @@
-import pandas as pd
-import io
-import uuid
+import logging
 from typing import Dict
+import pandas as pd
+import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from fastapi import UploadFile, HTTPException
+from sqlalchemy import select, delete
 
 from app.models import Dataset
-from app.schemas import DatasetUploadResponse, DatasetPreview
+from app.schemas import DatasetUploadResponse
+from app.config import settings
 
-# In-memory cache: dataset_id -> DataFrame (cleared on restart)
+logger = logging.getLogger(__name__)
+
+# In-memory cache for dataframes - keyed by dataset UUID string
+# NOTE: For multi-worker deployments (Railway), consider using Redis
 _dataset_cache: Dict[str, pd.DataFrame] = {}
+
+
+def _get_or_create_bucket():
+    try:
+        from supabase import create_client
+
+        sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        return sb.storage.from_(settings.SUPABASE_BUCKET)
+    except Exception:
+        return None
+
 
 class DatasetService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def process_upload(self, file: UploadFile) -> DatasetUploadResponse:
-        content = await file.read()
-        fname = file.filename or "upload.csv"
+    async def process_upload(self, file) -> DatasetUploadResponse:
+        contents = await file.read()
+        if not contents:
+            raise ValueError("Empty file")
 
-        if fname.endswith('.csv'):
-            df = pd.read_csv(io.StringIO(content.decode('utf-8', errors='replace')))
-        elif fname.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(io.BytesIO(content))
-        elif fname.endswith('.parquet'):
-            df = pd.read_parquet(io.BytesIO(content))
-        else:
-            raise HTTPException(400, "Unsupported format. Use CSV, Excel, or Parquet.")
+        # Parse dataframe
+        try:
+            if file.filename.lower().endswith(".csv"):
+                df = pd.read_csv(pd.io.common.StringIO(contents.decode("utf-8")))
+            elif file.filename.lower().endswith((".xlsx", ".xls")):
+                df = pd.read_excel(pd.io.common.BytesIO(contents))
+            else:
+                raise ValueError("Unsupported file format. Use CSV or Excel.")
+        except Exception as e:
+            logger.error(f"Failed to parse uploaded file: {e}")
+            raise ValueError(f"Failed to parse file: {e}")
 
-        # Clean column names
-        df.columns = [str(c).strip() for c in df.columns]
+        row_count = len(df)
+        column_count = len(df.columns)
 
+        # FIXED: Build real schema with actual pandas dtypes
         schema = {}
+        column_stats = {}
         for col in df.columns:
+            dtype = str(df[col].dtype)
+            null_count = int(df[col].isnull().sum())
+            unique_count = int(df[col].nunique(dropna=False))
+
+            # Determine type category for agents
+            if pd.api.types.is_numeric_dtype(df[col]):
+                type_category = "numeric"
+                # Compute numeric stats
+                col_min = float(df[col].min()) if not df[col].dropna().empty else None
+                col_max = float(df[col].max()) if not df[col].dropna().empty else None
+                col_mean = float(df[col].mean()) if not df[col].dropna().empty else None
+                col_std = float(df[col].std()) if not df[col].dropna().empty else None
+                column_stats[col] = {
+                    "type": type_category,
+                    "dtype": dtype,
+                    "null_count": null_count,
+                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
+                    "unique_count": unique_count,
+                    "min": col_min,
+                    "max": col_max,
+                    "mean": col_mean,
+                    "std": col_std,
+                }
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                type_category = "datetime"
+                column_stats[col] = {
+                    "type": type_category,
+                    "dtype": dtype,
+                    "null_count": null_count,
+                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
+                    "unique_count": unique_count,
+                }
+            elif pd.api.types.is_bool_dtype(df[col]):
+                type_category = "boolean"
+                true_count = int(df[col].sum()) if not df[col].dropna().empty else 0
+                column_stats[col] = {
+                    "type": type_category,
+                    "dtype": dtype,
+                    "null_count": null_count,
+                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
+                    "unique_count": unique_count,
+                    "true_count": true_count,
+                    "false_count": int(df[col].notna().sum()) - true_count,
+                }
+            else:
+                type_category = "categorical"
+                # Get top categories
+                value_counts = df[col].value_counts().head(10).to_dict()
+                # Convert keys to strings for JSON serialization
+                value_counts = {str(k): int(v) for k, v in value_counts.items()}
+                column_stats[col] = {
+                    "type": type_category,
+                    "dtype": dtype,
+                    "null_count": null_count,
+                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
+                    "unique_count": unique_count,
+                    "top_values": value_counts,
+                }
+
             schema[col] = {
-                "type": str(df[col].dtype),
-                "null_count": int(df[col].isnull().sum()),
-                "unique_count": int(df[col].nunique()),
-                "sample_values": [str(v) for v in df[col].dropna().head(5).tolist()],
+                "type": type_category,
+                "dtype": dtype,
+                "null_count": null_count,
+                "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
+                "unique_count": unique_count,
             }
 
-        dataset = Dataset(
-            filename=fname,
-            original_path=f"uploads/{uuid.uuid4()}_{fname}",
-            row_count=len(df),
-            column_count=len(df.columns),
-            file_size_bytes=len(content),
-            schema=schema,  # <-- FIXED: was dataset_schema
-        )
-        self.db.add(dataset)
-        await self.db.commit()
-        await self.db.refresh(dataset)
+        # FIXED: Store sample data for agents to generate context-aware insights
+        sample_data = []
+        try:
+            sample_df = df.head(5)
+            # Convert to JSON-serializable format
+            for _, row in sample_df.iterrows():
+                row_dict = {}
+                for col in df.columns:
+                    val = row[col]
+                    if pd.isna(val):
+                        row_dict[col] = None
+                    elif isinstance(val, (np.integer, np.floating)):
+                        row_dict[col] = float(val)
+                    elif isinstance(val, pd.Timestamp):
+                        row_dict[col] = val.isoformat()
+                    else:
+                        row_dict[col] = str(val)
+                sample_data.append(row_dict)
+        except Exception as e:
+            logger.warning(f"Failed to create sample data: {e}")
 
-        # Cache the dataframe
-        _dataset_cache[str(dataset.id)] = df
+        # Upload to Supabase Storage
+        bucket = _get_or_create_bucket()
+        blob_url = None
+        try:
+            if bucket:
+                upload_path = f"datasets/{pd.Timestamp.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+                bucket.upload(upload_path, contents)
+                blob_url = bucket.get_public_url(upload_path)
+        except Exception as e:
+            logger.warning(f"Supabase upload failed (storing locally): {e}")
+
+        # Save to DB
+        ds = Dataset(
+            filename=file.filename,
+            original_path=blob_url or "memory",
+            blob_url=blob_url,
+            row_count=row_count,
+            column_count=column_count,
+            file_size_bytes=len(contents),
+            schema=schema,
+            # FIXED: Store column stats and sample data
+            column_stats=column_stats,
+            sample_data=sample_data,
+        )
+        self.db.add(ds)
+        await self.db.commit()
+        await self.db.refresh(ds)
+
+        # Cache dataframe by UUID string
+        _dataset_cache[str(ds.id)] = df
+        logger.info(
+            f"Dataset {ds.id} ({file.filename}) uploaded: "
+            f"{row_count} rows, {column_count} columns, "
+            f"schema types: {[s['type'] for s in schema.values()]}"
+        )
 
         return DatasetUploadResponse(
-            id=dataset.id,
-            filename=dataset.filename,
-            row_count=dataset.row_count,
-            column_count=dataset.column_count,
-            file_size_bytes=dataset.file_size_bytes,
-            dataset_schema=dataset.schema,
-            uploaded_at=dataset.uploaded_at,
+            id=ds.id,
+            filename=ds.filename,
+            row_count=ds.row_count,
+            column_count=ds.column_count,
+            file_size_bytes=ds.file_size_bytes,
+            dataset_schema=ds.schema,
+            uploaded_at=ds.uploaded_at,
         )
 
     async def list_datasets(self, limit: int, offset: int):
@@ -72,39 +194,52 @@ class DatasetService:
         )
         return result.scalars().all()
 
-    async def get_preview(self, dataset_id: uuid.UUID, row_limit: int) -> DatasetPreview:
+    async def get_preview(self, dataset_id, row_limit: int = 100):
         result = await self.db.execute(select(Dataset).where(Dataset.id == dataset_id))
-        dataset = result.scalar_one_or_none()
-        if not dataset:
+        ds = result.scalar_one_or_none()
+        if not ds:
+            from fastapi import HTTPException
+
             raise HTTPException(404, "Dataset not found")
 
-        # Use cache if available
+        # Try cache first, else parse from blob
         df = _dataset_cache.get(str(dataset_id))
-        if df is not None:
-            sample = df.head(row_limit)
-            rows = []
-            for _, row in sample.iterrows():
-                rows.append({col: (None if pd.isna(v) else v) for col, v in row.items()})
-            return DatasetPreview(
-                columns=list(df.columns),
-                rows=rows,
-                total_rows=len(df),
-                sample_size=len(rows),
-            )
+        if df is None and ds.blob_url:
+            try:
+                if ds.filename.lower().endswith(".csv"):
+                    df = pd.read_csv(ds.blob_url)
+                else:
+                    df = pd.read_excel(ds.blob_url)
+                _dataset_cache[str(dataset_id)] = df
+            except Exception:
+                df = None
 
-        # Fallback: schema-only preview
-        return DatasetPreview(
-            columns=list((dataset.schema or {}).keys()),
-            rows=[],
-            total_rows=dataset.row_count,
-            sample_size=0,
-        )
+        if df is None:
+            from fastapi import HTTPException
 
-    async def delete_dataset(self, dataset_id: uuid.UUID):
+            raise HTTPException(404, "Dataset data not available")
+
+        preview_df = df.head(row_limit)
+        return {
+            "columns": list(df.columns),
+            "rows": preview_df.to_dict(orient="records"),
+            "total_rows": len(df),
+            "sample_size": len(preview_df),
+        }
+
+    async def delete_dataset(self, dataset_id):
         result = await self.db.execute(select(Dataset).where(Dataset.id == dataset_id))
-        dataset = result.scalar_one_or_none()
-        if not dataset:
+        ds = result.scalar_one_or_none()
+        if not ds:
+            from fastapi import HTTPException
+
             raise HTTPException(404, "Dataset not found")
+        # Remove from cache
         _dataset_cache.pop(str(dataset_id), None)
-        await self.db.delete(dataset)
+        await self.db.execute(delete(Dataset).where(Dataset.id == dataset_id))
         await self.db.commit()
+        logger.info(f"Dataset {dataset_id} deleted")
+
+    def get_cached_dataframe(self, dataset_id: str) -> pd.DataFrame | None:
+        """Get a cached dataframe by dataset UUID string."""
+        return _dataset_cache.get(dataset_id)
