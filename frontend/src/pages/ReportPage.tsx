@@ -19,7 +19,7 @@ export default function ReportPage() {
     const loadData = async () => {
       // Check if we already have strategist data
       const existing = getAgentOutput('strategist')
-      if (existing) return
+      if (existing && Object.keys(existing).length > 0) return
 
       setFetching(true)
       try {
@@ -36,12 +36,42 @@ export default function ReportPage() {
     }
 
     loadData()
-  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+  }, [currentRun?.id])
 
-  const strategyOutput = getAgentOutput('strategist')
-  const dataQualityOutput = getAgentOutput('data_engineer')
-  const statsOutput = getAgentOutput('statistician')
-  const mlOutput = getAgentOutput('ml_engineer')
+  const strategyOutput = getAgentOutput('strategist') || {}
+  const dataQualityOutput = getAgentOutput('data_engineer') || {}
+  const statsOutput = getAgentOutput('statistician') || {}
+  const mlOutput = getAgentOutput('ml_engineer') || {}
+
+  // CRITICAL FIX: Handle all possible data shapes from backend
+  const executiveSummary = strategyOutput.executive_summary
+    || (strategyOutput.business_insights?.[0] ? strategyOutput.business_insights[0] : '')
+    || 'Analysis complete. Review the findings below.'
+
+  const keyFindings = strategyOutput.key_findings
+    || strategyOutput.business_insights
+    || []
+
+  const recommendations = strategyOutput.recommendations
+    || strategyOutput.recommended_actions
+    || []
+
+  const businessImpact = strategyOutput.business_impact
+    || strategyOutput.roi_projection
+    || {}
+
+  const modelPerformance = strategyOutput.model_performance || {
+    best_model: mlOutput?.best_model,
+    r2: mlOutput?.best_r2,
+    rmse: mlOutput?.best_rmse,
+    quality_score: mlOutput?.quality_score
+  }
+
+  const hasStrategyData = strategyOutput && (
+    strategyOutput.business_insights?.length > 0
+    || strategyOutput.executive_summary
+    || strategyOutput.recommended_actions?.length > 0
+  )
 
   if (!currentRun) {
     return (
@@ -53,7 +83,7 @@ export default function ReportPage() {
     )
   }
 
-  if (!strategyOutput) {
+  if (!hasStrategyData) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <FileText className="w-12 h-12 text-muted-foreground animate-pulse" />
@@ -65,17 +95,6 @@ export default function ReportPage() {
         </p>
       </div>
     )
-  }
-
-  const executiveSummary = strategyOutput.executive_summary || strategyOutput.business_insights?.[0] || 'Analysis complete.'
-  const keyFindings = strategyOutput.key_findings || strategyOutput.business_insights || []
-  const recommendations = strategyOutput.recommendations || strategyOutput.recommended_actions || []
-  const businessImpact = strategyOutput.business_impact || strategyOutput.roi_projection || {}
-  const modelPerformance = strategyOutput.model_performance || {
-    best_model: mlOutput?.best_model,
-    r2: mlOutput?.best_r2,
-    rmse: mlOutput?.best_rmse,
-    quality_score: mlOutput?.quality_score
   }
 
   return (
@@ -154,7 +173,8 @@ export default function ReportPage() {
             <CardContent>
               {keyFindings.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No key findings available from the strategist agent.
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No key findings available from the strategist agent.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -181,7 +201,8 @@ export default function ReportPage() {
             <CardContent>
               {recommendations.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No recommendations available.
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No recommendations available.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -221,7 +242,8 @@ export default function ReportPage() {
             <CardContent>
               {Object.keys(businessImpact).length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No business impact data available.
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No business impact data available.</p>
                 </div>
               ) : (
                 <div className="space-y-6">
