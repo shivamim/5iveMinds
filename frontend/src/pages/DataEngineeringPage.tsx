@@ -1,223 +1,207 @@
-import { useState } from 'react'
 import { useStore } from '@/stores/appStore'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { DataUpload } from '@/components/data/DataUpload'
-import { FileQuestion } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Database, Wrench, AlertTriangle, FileUp } from 'lucide-react'
 
-export function DataEngineeringPage() {
-  const [activeTab, setActiveTab] = useState('upload')
-  // FIXED: Read data_engineer output from store instead of hardcoded data
-  const getAgentOutput = useStore((s) => s.getAgentOutput)
-  const agentExecutions = useStore((s) => s.agentExecutions)
-
+export default function DataEngineeringPage() {
+  const { getAgentOutput, currentRun } = useStore()
+  
+  // CRITICAL: Read from the store, not hardcoded data
   const dataEngineerOutput = getAgentOutput('data_engineer')
-  const execution = agentExecutions.find((e) => e.agent_name === 'data_engineer')
+  
+  // If no pipeline data yet, show empty state
+  if (!currentRun) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <FileUp className="w-12 h-12 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">No Pipeline Running</h2>
+        <p className="text-muted-foreground">Start an analysis from the Dashboard to see data engineering results.</p>
+      </div>
+    )
+  }
 
-  // Parse schema from agent output_data if available
-  const schemaColumns = dataEngineerOutput?.schema
-    ? (dataEngineerOutput.schema as Array<{
-        name: string
-        type: string
-        nulls?: number
-        unique?: number
-      }>)
-    : dataEngineerOutput?.columns
-      ? (dataEngineerOutput.columns as Array<{
-          name: string
-          type: string
-          nulls?: number
-          unique?: number
-        }>)
-      : null
+  // If pipeline running but data_engineer not completed yet
+  if (!dataEngineerOutput) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <Database className="w-12 h-12 text-muted-foreground animate-pulse" />
+        <h2 className="text-xl font-semibold">Waiting for Data Engineer...</h2>
+        <p className="text-muted-foreground">The Data Engineer agent is analyzing your dataset schema, quality, and outliers.</p>
+      </div>
+    )
+  }
 
-  // Parse cleaning summary
-  const cleaningSummary = dataEngineerOutput?.cleaning_summary as Record<
-    string,
-    unknown
-  > | null
-  const outlierInfo = dataEngineerOutput?.outliers as
-    | Array<{
-        column: string
-        count: number
-        method: string
-      }>
-    | null
+  const schema = dataEngineerOutput.schema || {}
+  const columns = dataEngineerOutput.columns || Object.keys(schema)
+  const imputation = dataEngineerOutput.imputation || []
+  const outlierDetails = dataEngineerOutput.outlier_details || []
+  const qualityScore = dataEngineerOutput.quality_score
+  const rowCount = dataEngineerOutput.row_count
+  const columnCount = dataEngineerOutput.column_count
+  const missingValuesPct = dataEngineerOutput.missing_values_pct
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Data Engineering</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Data Engineering</h1>
         <p className="text-muted-foreground">
           Upload data, schema inference, imputation, and outlier detection
         </p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs defaultValue="schema" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="upload">Upload</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
           <TabsTrigger value="imputation">Imputation</TabsTrigger>
           <TabsTrigger value="outliers">Outliers</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="upload" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Upload Dataset</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <DataUpload />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
+        {/* Schema Tab */}
         <TabsContent value="schema" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Inferred Schema</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5" />
+                Inferred Schema
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {execution?.status === 'running' ? (
-                <div className="text-center text-muted-foreground py-8">
-                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                  Analyzing schema...
-                </div>
-              ) : schemaColumns && schemaColumns.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-3 px-4 font-medium">Column</th>
-                        <th className="text-left py-3 px-4 font-medium">Type</th>
-                        <th className="text-left py-3 px-4 font-medium">Nulls</th>
-                        <th className="text-left py-3 px-4 font-medium">Unique</th>
-                        <th className="text-left py-3 px-4 font-medium">Quality</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {schemaColumns.map((col, i) => (
-                        <tr key={i} className="border-b last:border-0">
-                          <td className="py-3 px-4 font-mono">{col.name}</td>
-                          <td className="py-3 px-4">
-                            <span className="px-2 py-1 rounded-full bg-primary/10 text-xs">
-                              {col.type}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">{col.nulls ?? 0}</td>
-                          <td className="py-3 px-4">{col.unique ?? '—'}</td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`text-xs ${
-                                (col.nulls ?? 0) === 0
-                                  ? 'text-emerald-500'
-                                  : (col.nulls ?? 0) < 10
-                                    ? 'text-amber-500'
-                                    : 'text-red-500'
-                              }`}
-                            >
-                              {(col.nulls ?? 0) === 0
-                                ? 'Clean'
-                                : (col.nulls ?? 0) < 10
-                                  ? 'Minor issues'
-                                  : 'Needs attention'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <EmptyState message="Run a pipeline to see the inferred schema from your dataset. The Data Engineer agent will analyze column types, null counts, and data quality." />
-              )}
+              <div className="flex gap-4 mb-4">
+                <Badge variant="outline">{rowCount || '?'} rows</Badge>
+                <Badge variant="outline">{columnCount || columns.length} columns</Badge>
+                <Badge variant={qualityScore >= 90 ? 'default' : qualityScore >= 70 ? 'secondary' : 'destructive'}>
+                  Quality: {qualityScore ?? 'N/A'}/100
+                </Badge>
+                <Badge variant={missingValuesPct === 0 ? 'default' : missingValuesPct > 5 ? 'destructive' : 'secondary'}>
+                  Missing: {missingValuesPct ?? 0}%
+                </Badge>
+              </div>
+              
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Column</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Null %</TableHead>
+                    <TableHead>Unique</TableHead>
+                    <TableHead>Sample</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {columns.map((col: string) => {
+                    const colSchema = schema[col] || {}
+                    return (
+                      <TableRow key={col}>
+                        <TableCell className="font-medium">{col}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {colSchema.type || 'unknown'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{colSchema.null_pct ?? 0}%</TableCell>
+                        <TableCell>{colSchema.unique_count ?? 'N/A'}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate">
+                          {Array.isArray(colSchema.sample_values) 
+                            ? colSchema.sample_values.slice(0, 3).join(', ') 
+                            : 'N/A'}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* Imputation Tab */}
         <TabsContent value="imputation" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Imputation Summary</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Wrench className="h-5 w-5" />
+                Imputation Summary
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {execution?.status === 'running' ? (
-                <div className="text-center text-muted-foreground py-8">
-                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                  Running imputation...
-                </div>
-              ) : cleaningSummary ? (
-                <div className="space-y-4">
-                  {Object.entries(cleaningSummary).map(([key, value], i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted"
-                    >
-                      <span className="font-medium capitalize">{key.replace(/_/g, ' ')}</span>
-                      <span className="text-muted-foreground">{String(value)}</span>
-                    </div>
-                  ))}
+              {imputation.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No imputation was needed. All columns have complete data.
                 </div>
               ) : (
-                <EmptyState message="Run a pipeline to see imputation results. The Data Engineer agent handles missing values using median (numeric) and mode (categorical) strategies." />
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Column</TableHead>
+                      <TableHead>Strategy</TableHead>
+                      <TableHead>Values Filled</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {imputation.map((item: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{item.column}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{item.strategy}</Badge>
+                        </TableCell>
+                        <TableCell>{item.filled_count || item.count || 0}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* Outliers Tab */}
         <TabsContent value="outliers" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Outlier Detection</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Outlier Detection
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {execution?.status === 'running' ? (
-                <div className="text-center text-muted-foreground py-8">
-                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                  Detecting outliers...
-                </div>
-              ) : outlierInfo && outlierInfo.length > 0 ? (
-                <div className="space-y-3">
-                  {outlierInfo.map((o, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted"
-                    >
-                      <div>
-                        <span className="font-medium">{o.column}</span>
-                        <p className="text-xs text-muted-foreground">Method: {o.method}</p>
-                      </div>
-                      <span className="text-amber-500 font-mono">
-                        {o.count} outliers
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : dataEngineerOutput?.outlier_count ? (
-                <div className="p-4 rounded-lg bg-muted">
-                  <p className="text-sm">
-                    Outliers detected:{' '}
-                    <span className="font-mono">
-                      {String(dataEngineerOutput.outlier_count)}
-                    </span>
-                  </p>
+              {outlierDetails.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No outliers detected in the dataset.
                 </div>
               ) : (
-                <EmptyState message="Run a pipeline to see outlier detection results. The Data Engineer agent identifies outliers using IQR and Z-score methods." />
+                <div className="space-y-4">
+                  {outlierDetails.map((detail: any, idx: number) => (
+                    <Card key={idx} className="border-l-4 border-l-yellow-500">
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-semibold">{detail.column}</h4>
+                            <p className="text-sm text-muted-foreground">
+                              {detail.count || detail.outlier_count || 0} outliers detected
+                            </p>
+                          </div>
+                          <Badge variant="outline">
+                            Method: {detail.method || 'IQR'}
+                          </Badge>
+                        </div>
+                        {detail.values && (
+                          <div className="mt-2 text-xs text-muted-foreground bg-muted p-2 rounded">
+                            Values: {Array.isArray(detail.values) 
+                              ? detail.values.slice(0, 10).join(', ') 
+                              : detail.values}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
-  )
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="text-center py-12">
-      <FileQuestion className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-      <p className="text-muted-foreground max-w-md mx-auto">{message}</p>
     </div>
   )
 }
