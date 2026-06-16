@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,14 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Lightbulb, Target, ListTodo, Shield, AlertTriangle, ShieldAlert, FileUp, BarChart3 } from 'lucide-react'
 
 export default function StrategyPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
 
-  // CRITICAL FIX: Fetch data independently so this page works even if user
-  // navigates directly via URL or refreshes
   useEffect(() => {
     if (!currentRun?.id) return
-
     const loadData = async () => {
       const existing = getAgentOutput('strategist')
       if (existing && Object.keys(existing).length > 0) return
@@ -32,30 +29,49 @@ export default function StrategyPage() {
         setFetching(false)
       }
     }
-
     loadData()
-  }, [currentRun?.id])
+  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const strategyOutput = getAgentOutput('strategist') || {}
+  const strategyOutput = useMemo(() => getAgentOutput('strategist') || {}, [agentExecutions, getAgentOutput])
 
-  // CRITICAL FIX: Handle all possible data shapes from backend
-  const insights = strategyOutput.business_insights || []
-  const actions = strategyOutput.recommended_actions || []
+  const insights = useMemo(() => {
+    const raw = strategyOutput.business_insights || strategyOutput.insights || []
+    return raw.map((item: any, i: number) => typeof item === 'string' ? item : item.description || item.text || JSON.stringify(item))
+  }, [strategyOutput])
+
+  const actions = useMemo(() => {
+    const raw = strategyOutput.recommended_actions || strategyOutput.actions || strategyOutput.recommendations || []
+    if (raw.length === 0 && insights.length > 0) {
+      return insights.slice(0, 3).map((insight: string, i: number) => ({
+        action: `Action ${i + 1}`,
+        description: insight,
+        priority: i === 0 ? 'High' : 'Medium',
+        timeline: 'TBD',
+        expected_impact: 'Derived from analysis insight',
+      }))
+    }
+    return raw.map((a: any, i: number) => ({
+      action: a.action || a.title || a.recommendation || `Action ${i + 1}`,
+      description: a.description || a.reason || a.impact || '',
+      priority: a.priority || a.urgency || 'Medium',
+      timeline: a.timeline || a.timeframe || 'TBD',
+      expected_impact: a.expected_impact || a.expected_outcome || '',
+    }))
+  }, [strategyOutput, insights])
+
   const roi = strategyOutput.roi_projection || {}
   const risks = strategyOutput.risk_matrix || []
   const scenarios = strategyOutput.scenario_simulations || {}
   const qualityScore = strategyOutput.quality_score
   const executiveSummary = strategyOutput.executive_summary || ''
 
-  // Build SWOT from available data
-  const swot = strategyOutput.swot || {
+  const swot = useMemo(() => strategyOutput.swot || {
     strengths: insights.filter((i: string) => i.toLowerCase().includes('strong') || i.toLowerCase().includes('quality')),
     weaknesses: insights.filter((i: string) => i.toLowerCase().includes('weak') || i.toLowerCase().includes('missing') || i.toLowerCase().includes('cleanup')),
     opportunities: insights.filter((i: string) => i.toLowerCase().includes('opportunit') || i.toLowerCase().includes('predict') || i.toLowerCase().includes('feature')),
-    threats: risks.map((r: any) => r.risk)
-  }
+    threats: risks.map((r: any) => r.risk || r.threat || ''),
+  }, [strategyOutput, insights, risks])
 
-  // Check if we have meaningful data
   const hasData = insights.length > 0 || actions.length > 0 || executiveSummary
 
   if (!currentRun) {
@@ -74,9 +90,7 @@ export default function StrategyPage() {
         <Lightbulb className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for Strategist...</h2>
         <p className="text-muted-foreground">
-          {fetching
-            ? 'Fetching results from server...'
-            : 'The Strategist is generating business insights and recommendations.'}
+          {fetching ? 'Fetching results from server...' : 'The Strategist is generating business insights and recommendations.'}
         </p>
       </div>
     )
@@ -86,12 +100,8 @@ export default function StrategyPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Strategy</h1>
-        <p className="text-muted-foreground">
-          Business insights, action items, and strategic recommendations
-        </p>
-        <p className="text-sm text-muted-foreground mt-1">
-          Analysis for: {currentRun.dataset_name}
-        </p>
+        <p className="text-muted-foreground">Business insights, action items, and strategic recommendations</p>
+        <p className="text-sm text-muted-foreground mt-1">Analysis for: {currentRun.dataset_name}</p>
       </div>
 
       {executiveSummary && (
@@ -118,7 +128,6 @@ export default function StrategyPage() {
           <TabsTrigger value="roi">ROI</TabsTrigger>
         </TabsList>
 
-        {/* Insights Tab */}
         <TabsContent value="insights" className="space-y-4">
           <Card>
             <CardHeader>
@@ -149,7 +158,6 @@ export default function StrategyPage() {
           </Card>
         </TabsContent>
 
-        {/* Actions Tab */}
         <TabsContent value="actions" className="space-y-4">
           <Card>
             <CardHeader>
@@ -178,9 +186,12 @@ export default function StrategyPage() {
                             {action.priority}
                           </Badge>
                         </div>
+                        {action.description && (
+                          <p className="text-sm text-muted-foreground mb-2">{action.description}</p>
+                        )}
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Target className="h-4 w-4" />
-                          Timeline: {action.timeline || 'TBD'}
+                          Timeline: {action.timeline}
                         </div>
                         {action.expected_impact && (
                           <p className="mt-2 text-sm text-green-600">{action.expected_impact}</p>
@@ -194,7 +205,6 @@ export default function StrategyPage() {
           </Card>
         </TabsContent>
 
-        {/* SWOT Tab */}
         <TabsContent value="swot" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Card className="border-l-4 border-l-green-500">
@@ -210,9 +220,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.strengths.map((s: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2">
-                        <span className="text-green-500">✓</span> {s}
-                      </li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-green-500">✓</span> {s}</li>
                     ))}
                   </ul>
                 )}
@@ -232,9 +240,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.weaknesses.map((w: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2">
-                        <span className="text-yellow-500">!</span> {w}
-                      </li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-yellow-500">!</span> {w}</li>
                     ))}
                   </ul>
                 )}
@@ -254,9 +260,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.opportunities.map((o: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2">
-                        <span className="text-blue-500">→</span> {o}
-                      </li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-blue-500">→</span> {o}</li>
                     ))}
                   </ul>
                 )}
@@ -276,9 +280,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.threats.map((t: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2">
-                        <span className="text-red-500">⚠</span> {t}
-                      </li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-red-500">⚠</span> {t}</li>
                     ))}
                   </ul>
                 )}
@@ -287,7 +289,6 @@ export default function StrategyPage() {
           </div>
         </TabsContent>
 
-        {/* ROI Tab */}
         <TabsContent value="roi" className="space-y-4">
           <Card>
             <CardHeader>
@@ -324,7 +325,6 @@ export default function StrategyPage() {
             </CardContent>
           </Card>
 
-          {/* Risk Matrix */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -342,19 +342,13 @@ export default function StrategyPage() {
                 <div className="space-y-2">
                   {risks.map((risk: any, idx: number) => (
                     <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                      <span className="font-medium">{risk.risk}</span>
+                      <span className="font-medium">{risk.risk || risk.threat || '—'}</span>
                       <div className="flex gap-2">
-                        <Badge variant={
-                          risk.likelihood === 'High' ? 'destructive' :
-                          risk.likelihood === 'Medium' ? 'secondary' : 'outline'
-                        }>
-                          Likelihood: {risk.likelihood}
+                        <Badge variant={risk.likelihood === 'High' ? 'destructive' : risk.likelihood === 'Medium' ? 'secondary' : 'outline'}>
+                          Likelihood: {risk.likelihood || 'N/A'}
                         </Badge>
-                        <Badge variant={
-                          risk.impact === 'High' ? 'destructive' :
-                          risk.impact === 'Medium' ? 'secondary' : 'outline'
-                        }>
-                          Impact: {risk.impact}
+                        <Badge variant={risk.impact === 'High' ? 'destructive' : risk.impact === 'Medium' ? 'secondary' : 'outline'}>
+                          Impact: {risk.impact || 'N/A'}
                         </Badge>
                       </div>
                     </div>
