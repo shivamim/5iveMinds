@@ -7,16 +7,32 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import {
   Activity, Clock, BarChart3, ArrowRight, CheckCircle2,
-  XCircle, Loader2, AlertCircle
+  XCircle, Loader2, AlertCircle, TrendingUp, Database, Brain, Lightbulb
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+
+// Agent icon mapping for the dashboard
+const AGENT_ICONS: Record<string, React.ReactNode> = {
+  data_engineer: <Database className="h-4 w-4" />,
+  statistician: <TrendingUp className="h-4 w-4" />,
+  ml_engineer: <Brain className="h-4 w-4" />,
+  strategist: <Lightbulb className="h-4 w-4" />,
+  designer: <BarChart3 className="h-4 w-4" />,
+}
+
+const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  data_engineer: 'Data Engineer',
+  statistician: 'Statistician',
+  ml_engineer: 'ML Engineer',
+  strategist: 'Strategist',
+  designer: 'Designer',
+}
 
 export default function DashboardPage() {
   const {
     currentRun,
     setCurrentRun,
     setAgentExecutions,
-    theme
   } = useStore()
 
   const [status, setStatus] = useState<any>(null)
@@ -125,6 +141,20 @@ export default function DashboardPage() {
   const completedAgents = executions.filter((e: any) => e.status === 'completed').length
   const totalAgents = executions.length || 5
 
+  // Calculate per-agent quality scores for transparency
+  const agentScores = executions
+    .filter((e: any) => e.quality_score !== null && e.quality_score !== undefined)
+    .map((e: any) => ({
+      name: e.agent_name,
+      displayName: AGENT_DISPLAY_NAMES[e.agent_name] || e.agent_name,
+      score: Math.round(e.quality_score),
+      status: e.status,
+    }))
+
+  const overallQuality = status?.quality_score_avg
+    ? Math.round(status.quality_score_avg)
+    : null
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -175,24 +205,67 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Quality Score</CardTitle>
+            <CardTitle className="text-sm font-medium">Overall Quality</CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {status?.quality_score_avg
-                ? `${Math.round(status.quality_score_avg)}%`
+              {overallQuality !== null
+                ? `${overallQuality}%`
                 : '...'}
             </div>
-            {status?.quality_score_avg && (
-              <p className="text-xs text-green-500 mt-1">
-                {status.quality_score_avg >= 90 ? 'Excellent' :
-                  status.quality_score_avg >= 75 ? 'Good' : 'Fair'}
+            {overallQuality !== null && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Average across {agentScores.length} agents
               </p>
             )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Per-Agent Quality Scores - NEW: Shows transparent breakdown */}
+      {agentScores.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Agent Quality Scores</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {agentScores.map((agent: any) => (
+              <div key={agent.name} className="flex items-center gap-3">
+                <div className="flex items-center gap-2 w-36">
+                  {AGENT_ICONS[agent.name] || <Activity className="h-4 w-4" />}
+                  <span className="text-sm font-medium">{agent.displayName}</span>
+                </div>
+                <div className="flex-1">
+                  <Progress
+                    value={agent.score}
+                    className="h-2"
+                  />
+                </div>
+                <div className="w-12 text-right">
+                  <Badge
+                    variant={agent.score >= 90 ? 'default' : agent.score >= 75 ? 'secondary' : 'outline'}
+                    className="text-xs"
+                  >
+                    {agent.score}%
+                  </Badge>
+                </div>
+              </div>
+            ))}
+            <div className="pt-2 border-t">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-semibold">Overall Average</span>
+                <span className="text-lg font-bold">{overallQuality}%</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {overallQuality && overallQuality >= 90 ? 'Excellent - All agents performed well' :
+                 overallQuality && overallQuality >= 75 ? 'Good - Minor areas for improvement' :
+                 'Fair - Review agent outputs for issues'}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Business Question */}
       <Card>
@@ -243,7 +316,9 @@ export default function DashboardPage() {
                     {execution.status === 'running' && (
                       <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
                     )}
-                    <span className="font-medium capitalize">{execution.agent_name}</span>
+                    <span className="font-medium capitalize">
+                      {AGENT_DISPLAY_NAMES[execution.agent_name] || execution.agent_name}
+                    </span>
                   </div>
                   <Badge variant={
                     execution.status === 'completed' ? 'default' :
@@ -253,12 +328,28 @@ export default function DashboardPage() {
                   </Badge>
                 </div>
 
-                {execution.output_data && (
+                {execution.output_data && Object.keys(execution.output_data).length > 0 && (
                   <div className="mt-2 text-sm text-muted-foreground bg-muted p-2 rounded overflow-x-auto">
-                    <pre className="text-xs whitespace-pre-wrap break-all">
-                      {JSON.stringify(execution.output_data).slice(0, 500)}
-                      {JSON.stringify(execution.output_data).length > 500 ? '...' : ''}
-                    </pre>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {execution.output_data.quality_score !== undefined && (
+                        <div>Quality: {execution.output_data.quality_score}/100</div>
+                      )}
+                      {execution.output_data.row_count !== undefined && (
+                        <div>Rows: {execution.output_data.row_count}</div>
+                      )}
+                      {execution.output_data.column_count !== undefined && (
+                        <div>Columns: {execution.output_data.column_count}</div>
+                      )}
+                      {execution.output_data.best_model && (
+                        <div>Model: {execution.output_data.best_model}</div>
+                      )}
+                      {execution.output_data.best_r2 !== undefined && (
+                        <div>R²: {execution.output_data.best_r2}</div>
+                      )}
+                      {execution.output_data.business_insights && (
+                        <div>Insights: {execution.output_data.business_insights.length}</div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -272,7 +363,7 @@ export default function DashboardPage() {
                   Duration: {execution.execution_time_ms
                     ? `${(execution.execution_time_ms / 1000).toFixed(1)}s`
                     : 'N/A'}
-                  {execution.quality_score && ` | Quality: ${execution.quality_score}`}
+                  {execution.quality_score && ` | Quality: ${Math.round(execution.quality_score)}%`}
                 </div>
               </CardContent>
             </Card>
