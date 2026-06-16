@@ -1,15 +1,43 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '@/stores/appStore'
+import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Brain, Trophy, BarChart3, Zap, FileUp } from 'lucide-react'
 
 export default function MLResultsPage() {
-  const { getAgentOutput, currentRun } = useStore()
-  
-  // CRITICAL: Read from the store, not hardcoded data
+  const { getAgentOutput, currentRun, setAgentExecutions } = useStore()
+  const [fetching, setFetching] = useState(false)
+
+  // CRITICAL FIX: Fetch data independently so this page works even if user
+  // navigates directly via URL or refreshes
+  useEffect(() => {
+    if (!currentRun?.id) return
+
+    const loadData = async () => {
+      const existing = getAgentOutput('ml_engineer')
+      if (existing) return
+
+      setFetching(true)
+      try {
+        const res = await pipelineApi.getStatus(currentRun.id)
+        const executions = res.data?.executions ?? []
+        if (executions.length > 0) {
+          setAgentExecutions(executions)
+        }
+      } catch (err) {
+        console.error('Failed to fetch agent data:', err)
+      } finally {
+        setFetching(false)
+      }
+    }
+
+    loadData()
+  }, [currentRun?.id, getAgentOutput, setAgentExecutions])
+
   const mlOutput = getAgentOutput('ml_engineer')
-  
+
   if (!currentRun) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
@@ -25,7 +53,11 @@ export default function MLResultsPage() {
       <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
         <Brain className="w-12 h-12 text-muted-foreground animate-pulse" />
         <h2 className="text-xl font-semibold">Waiting for ML Engineer...</h2>
-        <p className="text-muted-foreground">The ML Engineer is training and comparing models.</p>
+        <p className="text-muted-foreground">
+          {fetching
+            ? 'Fetching results from server...'
+            : 'The ML Engineer is training and comparing models.'}
+        </p>
       </div>
     )
   }
@@ -62,7 +94,7 @@ export default function MLResultsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold mb-2">{bestModel}</div>
-            <div className="flex gap-2 mb-4">
+            <div className="flex flex-wrap gap-2 mb-4">
               <Badge variant="outline">R² = {bestR2 ?? 'N/A'}</Badge>
               <Badge variant="outline">RMSE = {bestRmse ?? 'N/A'}</Badge>
               <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
