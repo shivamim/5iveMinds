@@ -20,6 +20,8 @@ async_engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    pool_recycle=1800,  # Recycle connections after 30 min (Railway fix)
+    echo=False,
     connect_args={
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
