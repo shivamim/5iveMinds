@@ -7,7 +7,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 async def call_groq(prompt: str, system: str = "You are a data analyst. Respond with valid JSON only.", max_tokens: int = 800) -> Optional[Dict]:
     """Call Groq API and return parsed JSON. Returns None on any failure."""
     try:
@@ -15,6 +14,12 @@ async def call_groq(prompt: str, system: str = "You are a data analyst. Respond 
         api_key = settings.GROQ_API_KEY
         if not api_key:
             return None
+
+        # FIXED: Truncate prompt if too long (Groq 8b has ~8k context, but safer at 4k)
+        max_prompt_length = 3500
+        if len(prompt) > max_prompt_length:
+            prompt = prompt[:max_prompt_length] + "... [truncated]"
+            logger.warning(f"Prompt truncated to {max_prompt_length} chars for Groq")
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -34,14 +39,17 @@ async def call_groq(prompt: str, system: str = "You are a data analyst. Respond 
             text = resp.json()["choices"][0]["message"]["content"].strip()
             # Strip markdown fences if present
             if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
+                parts = text.split("```")
+                if len(parts) >= 3:
+                    text = parts[1]
+                else:
+                    text = text.replace("```", "")
+            if text.startswith("json"):
+                text = text[4:]
             return json.loads(text.strip())
     except Exception as e:
         logger.warning(f"Groq call failed: {e}")
         return None
-
 
 class BaseAgent(ABC):
     def __init__(self, message_board: MessageBoard):
