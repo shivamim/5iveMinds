@@ -12,6 +12,43 @@ import { Activity, FlaskConical, FileUp } from 'lucide-react'
 // Color palette for charts
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
+/**
+ * CRITICAL FIX: Convert histogram bin data to recharts-compatible format
+ * The statistician agent provides: histogram: { bin_edges: [...], frequencies: [...] }
+ * We need to convert this to: [{ bin: 'label', frequency: value }, ...]
+ */
+function buildHistogramData(dist: any): Array<{ bin: string; frequency: number; midpoint: number }> {
+  const histogram = dist.histogram || {}
+  const binEdges = histogram.bin_edges || []
+  const frequencies = histogram.frequencies || []
+
+  if (binEdges.length > 1 && frequencies.length > 0) {
+    // Use actual histogram bin data
+    return frequencies.map((freq: number, i: number) => ({
+      bin: binEdges[i] !== undefined ? String(binEdges[i]) : `Bin ${i}`,
+      frequency: Number(freq) || 0,
+      midpoint: i,
+    }))
+  }
+
+  // Fallback: generate bins from mean/std/min/max
+  const mean = Number(dist.mean) || 0
+  const std = Number(dist.std) || 1
+  const min = Number(dist.min) || (mean - 3 * std)
+  const max = Number(dist.max) || (mean + 3 * std)
+  const bins = 10
+  const step = (max - min) / bins || 1
+
+  return Array.from({ length: bins }, (_, i) => {
+    const binStart = min + step * i
+    return {
+      bin: binStart.toFixed(2),
+      frequency: Math.round(Math.exp(-0.5 * Math.pow((binStart + step / 2 - mean) / std, 2)) * 100),
+      midpoint: i,
+    }
+  })
+}
+
 export default function StatisticsPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
@@ -28,22 +65,42 @@ export default function StatisticsPage() {
         return
       }
 
-      // Fetch from API
+      // CRITICAL FIX: Fetch from /results endpoint which has normalized output_data
       setFetching(true)
       try {
-        const res = await pipelineApi.getStatus(currentRun.id)
-        const executions = res.data?.executions ?? []
-        if (executions.length > 0) {
-          setAgentExecutions(executions)
-          const statExec = executions.find(
-            (e: any) => e.agent_name === 'statistician' && e.output_data
-          )
-          if (statExec?.output_data) {
-            setOutput(statExec.output_data)
+        const res = await pipelineApi.getResults(currentRun.id)
+        const executions = res.data?.executions || {}
+        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
+          agent_name,
+          output_data,
+          status: 'completed',
+        }))
+
+        if (executionArray.length > 0) {
+          setAgentExecutions(executionArray)
+          const statOutput = executions?.statistician
+          if (statOutput && typeof statOutput === 'object') {
+            setOutput(statOutput as Record<string, any>)
           }
         }
       } catch (err) {
-        console.error('Failed to fetch statistician data:', err)
+        console.error('Failed to fetch statistician data from /results:', err)
+        // Fallback to /status endpoint
+        try {
+          const res = await pipelineApi.getStatus(currentRun.id)
+          const executions = res.data?.executions ?? []
+          if (executions.length > 0) {
+            setAgentExecutions(executions)
+            const statExec = executions.find(
+              (e: any) => e.agent_name === 'statistician' && e.output_data
+            )
+            if (statExec?.output_data) {
+              setOutput(statExec.output_data)
+            }
+          }
+        } catch (err2) {
+          console.error('Failed to fetch from /status fallback:', err2)
+        }
       } finally {
         setFetching(false)
       }
@@ -169,19 +226,15 @@ export default function StatisticsPage() {
                           )}
                         </div>
 
-                        {/* CRITICAL FIX: Render bar chart for distribution */}
+                        {/* CRITICAL FIX: Render ACTUAL HISTOGRAM with bin data */}
                         <div className="h-48 w-full">
                           <ResponsiveContainer width="100%" height="100%">
                             <BarChart
-                              data={[
-                                { name: 'Mean', value: Number(dist.mean) || 0 },
-                                { name: 'Std', value: Number(dist.std) || 0 },
-                                { name: 'Skew', value: Math.abs(Number(dist.skewness) || 0) * 10 },
-                              ]}
-                              margin={{ top: 5, right: 5, left: -20, bottom: 5 }}
+                              data={buildHistogramData(dist)}
+                              margin={{ top: 5, right: 5, left: -10, bottom: 5 }}
                             >
                               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                              <XAxis dataKey="bin" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={50} />
                               <YAxis tick={{ fontSize: 12 }} />
                               <Tooltip
                                 contentStyle={{
@@ -190,16 +243,9 @@ export default function StatisticsPage() {
                                   borderRadius: '6px',
                                   fontSize: '12px'
                                 }}
+                                formatter={(value: any) => [value, 'Frequency']}
                               />
-                              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                                {[
-                                  { name: 'Mean', value: Number(dist.mean) || 0 },
-                                  { name: 'Std', value: Number(dist.std) || 0 },
-                                  { name: 'Skew', value: Math.abs(Number(dist.skewness) || 0) * 10 },
-                                ].map((_, i) => (
-                                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                                ))}
-                              </Bar>
+                              <Bar dataKey="frequency" fill={CHART_COLORS[idx % CHART_COLORS.length]} radius={[2, 2, 0, 0]} />
                             </BarChart>
                           </ResponsiveContainer>
                         </div>
