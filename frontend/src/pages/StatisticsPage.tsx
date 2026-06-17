@@ -1,48 +1,80 @@
+
+
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { BarChart, Activity, FlaskConical, FileUp } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { Activity, FlaskConical, FileUp } from 'lucide-react'
+
+// Color palette for charts
+const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
 export default function StatisticsPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
+  const [output, setOutput] = useState<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
-    const loadData = async () => {
-      const existing = getAgentOutput('statistician')
-      if (existing && Object.keys(existing).length > 0) return
 
+    const loadData = async () => {
+      // First check store
+      const existing = getAgentOutput('statistician')
+      if (existing && Object.keys(existing).length > 0) {
+        setOutput(existing)
+        return
+      }
+
+      // Fetch from API
       setFetching(true)
       try {
         const res = await pipelineApi.getStatus(currentRun.id)
         const executions = res.data?.executions ?? []
         if (executions.length > 0) {
           setAgentExecutions(executions)
+          const statExec = executions.find(
+            (e: any) => e.agent_name === 'statistician' && e.output_data
+          )
+          if (statExec?.output_data) {
+            setOutput(statExec.output_data)
+          }
         }
       } catch (err) {
-        console.error('Failed to fetch agent data:', err)
+        console.error('Failed to fetch statistician data:', err)
       } finally {
         setFetching(false)
       }
     }
+
     loadData()
   }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const statisticianOutput = useMemo(() => getAgentOutput('statistician') || {}, [agentExecutions, getAgentOutput])
+  // Get output from store or local state
+  const statisticianOutput = useMemo(() => {
+    if (output) return output
+    return getAgentOutput('statistician') || {}
+  }, [output, agentExecutions, getAgentOutput])
 
+  // Extract data with fallbacks
   const distributions = statisticianOutput.distributions || []
   const correlations = statisticianOutput.correlations || []
   const hypothesisTests = statisticianOutput.hypothesis_tests || []
   const insights = statisticianOutput.insights || []
   const qualityScore = statisticianOutput.quality_score
-  const numericColumns = statisticianOutput.numeric_columns ?? statisticianOutput.key_statistics?.numeric_columns ?? 0
+  const numericColumns = statisticianOutput.numeric_columns
+    ?? statisticianOutput.key_statistics?.numeric_columns
+    ?? 0
   const significantCorrelations = statisticianOutput.significant_correlations ?? 0
 
-  const hasData = distributions.length > 0 || correlations.length > 0 || hypothesisTests.length > 0 || insights.length > 0
+  // CRITICAL FIX: More lenient hasData check
+  const hasData = distributions.length > 0
+    || correlations.length > 0
+    || hypothesisTests.length > 0
+    || insights.length > 0
+    || qualityScore !== undefined
 
   if (!currentRun) {
     return (
@@ -100,7 +132,7 @@ export default function StatisticsPage() {
             <CardContent>
               {distributions.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  <BarChart className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p>No distribution data available from the statistician agent.</p>
                 </div>
               ) : (
@@ -109,7 +141,8 @@ export default function StatisticsPage() {
                     <Card key={idx}>
                       <CardContent className="p-4">
                         <h4 className="font-semibold mb-2">{dist.column || `Column ${idx + 1}`}</h4>
-                        <div className="space-y-1 text-sm">
+                        {/* Distribution Stats */}
+                        <div className="space-y-1 text-sm mb-4">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Type:</span>
                             <Badge variant="outline" className="capitalize">{dist.type || dist.distribution_type || 'unknown'}</Badge>
@@ -134,6 +167,41 @@ export default function StatisticsPage() {
                               </Badge>
                             </div>
                           )}
+                        </div>
+
+                        {/* CRITICAL FIX: Render bar chart for distribution */}
+                        <div className="h-48 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={[
+                                { name: 'Mean', value: Number(dist.mean) || 0 },
+                                { name: 'Std', value: Number(dist.std) || 0 },
+                                { name: 'Skew', value: Math.abs(Number(dist.skewness) || 0) * 10 },
+                              ]}
+                              margin={{ top: 5, right: 5, left: -20, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                              <YAxis tick={{ fontSize: 12 }} />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#1f2937',
+                                  border: '1px solid #374151',
+                                  borderRadius: '6px',
+                                  fontSize: '12px'
+                                }}
+                              />
+                              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                                {[
+                                  { name: 'Mean', value: Number(dist.mean) || 0 },
+                                  { name: 'Std', value: Number(dist.std) || 0 },
+                                  { name: 'Skew', value: Math.abs(Number(dist.skewness) || 0) * 10 },
+                                ].map((_, i) => (
+                                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
                         </div>
                       </CardContent>
                     </Card>
@@ -164,19 +232,19 @@ export default function StatisticsPage() {
                     <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{corr.var1}</span>
-                        <span className="text-muted-foreground">↔</span>
+                        <span className="text-muted-foreground">&#8596;</span>
                         <span className="font-medium">{corr.var2}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className={`font-bold ${
-                          Math.abs(corr.correlation) > 0.7 ? 'text-green-500' :
-                          Math.abs(corr.correlation) > 0.4 ? 'text-yellow-500' : 'text-muted-foreground'
+                          Math.abs(Number(corr.correlation)) > 0.7 ? 'text-green-500' :
+                          Math.abs(Number(corr.correlation)) > 0.4 ? 'text-yellow-500' : 'text-muted-foreground'
                         }`}>
-                          r = {corr.correlation?.toFixed?.(3) ?? corr.correlation}
+                          r = {typeof corr.correlation === 'number' ? corr.correlation.toFixed(3) : corr.correlation}
                         </span>
                         {corr.p_value !== undefined && (
-                          <Badge variant={corr.p_value < 0.05 ? 'default' : 'secondary'}>
-                            p = {corr.p_value?.toFixed?.(4) ?? corr.p_value}
+                          <Badge variant={Number(corr.p_value) < 0.05 ? 'default' : 'secondary'}>
+                            p = {typeof corr.p_value === 'number' ? corr.p_value.toFixed(4) : corr.p_value}
                           </Badge>
                         )}
                         {corr.significant && <Badge>Significant</Badge>}
@@ -205,43 +273,54 @@ export default function StatisticsPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {hypothesisTests.map((test: any, idx: number) => (
-                    <Card key={idx} className="border-l-4 border-l-blue-500">
-                      <CardContent className="p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-semibold">{test.name || test.test_name || `Test ${idx + 1}`}</h4>
-                          <Badge variant={test.rejected ? 'default' : 'secondary'}>
-                            {test.rejected ? 'Rejected' : 'Not Rejected'}
-                          </Badge>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Statistic:</span>{' '}
-                            <span className="font-medium">{test.statistic?.toFixed?.(4) ?? test.statistic ?? 'N/A'}</span>
+                  {hypothesisTests.map((test: any, idx: number) => {
+                    // CRITICAL FIX: Ensure test name is always displayed
+                    const testName = test.name
+                      || test.test_name
+                      || (test.column ? `${test.test_type || 'Test'}: ${test.column}` : `Test ${idx + 1}`)
+
+                    return (
+                      <Card key={idx} className="border-l-4 border-l-blue-500">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <h4 className="font-semibold">{testName}</h4>
+                            <Badge variant={test.rejected ? 'default' : 'secondary'}>
+                              {test.rejected ? 'Rejected' : 'Not Rejected'}
+                            </Badge>
                           </div>
-                          <div>
-                            <span className="text-muted-foreground">p-value:</span>{' '}
-                            <span className="font-medium">{test.p_value?.toFixed?.(4) ?? test.p_value ?? 'N/A'}</span>
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">Statistic:</span>{' '}
+                              <span className="font-medium">
+                                {typeof test.statistic === 'number' ? test.statistic.toFixed(4) : test.statistic ?? 'N/A'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">p-value:</span>{' '}
+                              <span className="font-medium">
+                                {typeof test.p_value === 'number' ? test.p_value.toFixed(4) : test.p_value ?? 'N/A'}
+                              </span>
+                            </div>
+                            {test.degrees_of_freedom !== undefined && (
+                              <div>
+                                <span className="text-muted-foreground">df:</span>{' '}
+                                <span>{test.degrees_of_freedom}</span>
+                              </div>
+                            )}
+                            {test.effect_size !== undefined && (
+                              <div>
+                                <span className="text-muted-foreground">Effect Size:</span>{' '}
+                                <span>{typeof test.effect_size === 'number' ? test.effect_size.toFixed(4) : test.effect_size}</span>
+                              </div>
+                            )}
                           </div>
-                          {test.degrees_of_freedom && (
-                            <div>
-                              <span className="text-muted-foreground">df:</span>{' '}
-                              <span>{test.degrees_of_freedom}</span>
-                            </div>
+                          {test.description && (
+                            <p className="mt-2 text-sm text-muted-foreground">{test.description}</p>
                           )}
-                          {test.effect_size && (
-                            <div>
-                              <span className="text-muted-foreground">Effect Size:</span>{' '}
-                              <span>{test.effect_size?.toFixed?.(4) ?? test.effect_size}</span>
-                            </div>
-                          )}
-                        </div>
-                        {test.description && (
-                          <p className="mt-2 text-sm text-muted-foreground">{test.description}</p>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
                 </div>
               )}
             </CardContent>
