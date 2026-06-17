@@ -299,4 +299,88 @@ Return ONLY this JSON (no markdown, no explanation):
             "_source": "template"
         }
 
-    def _sanitize
+    def _sanitize_roi(self, roi: dict) -> dict:
+        """Ensure ROI values are properly formatted strings."""
+        if not roi:
+            return {
+                "conservative": "+10%",
+                "moderate": "+20%",
+                "optimistic": "+30%"
+            }
+        sanitized = {}
+        for key in ["conservative", "moderate", "optimistic"]:
+            val = roi.get(key, "")
+            if isinstance(val, (int, float)):
+                sanitized[key] = f"+{val}%"
+            elif isinstance(val, str):
+                val = val.strip()
+                if not val.startswith(("+", "-")):
+                    val = "+" + val
+                if not val.endswith("%"):
+                    val = val + "%"
+                sanitized[key] = val
+            else:
+                defaults = {"conservative": "+10%", "moderate": "+20%", "optimistic": "+30%"}
+                sanitized[key] = defaults.get(key, "+10%")
+        return sanitized
+
+    def _default_risks(self, column_stats: dict) -> list:
+        """Generate contextual risks based on data characteristics."""
+        risks = []
+
+        high_null = any(
+            stat.get("null_pct", 0) > 10
+            for stat in column_stats.values()
+        )
+        if high_null:
+            risks.append({
+                "risk": "Data quality issues from missing values",
+                "likelihood": "High",
+                "impact": "High"
+            })
+
+        risks.append({
+            "risk": "Model performance degradation on unseen data distributions",
+            "likelihood": "Medium",
+            "impact": "High"
+        })
+
+        id_cols = [
+            col for col, stat in column_stats.items()
+            if stat.get("unique_count", 0) > 0 and stat.get("unique_count") == stat.get("row_count", 0)
+        ]
+        if id_cols:
+            risks.append({
+                "risk": f"Potential data leakage from ID-like columns ({', '.join(id_cols[:2])})",
+                "likelihood": "High",
+                "impact": "High"
+            })
+
+        risks.append({
+            "risk": "Feature drift in production deployment",
+            "likelihood": "Medium",
+            "impact": "Medium"
+        })
+
+        return risks
+
+    def _calculate_scenarios(self, roi: dict) -> dict:
+        """Calculate scenario multipliers from ROI percentages."""
+        try:
+            moderate_str = roi.get("moderate", "+15%").replace("%", "").replace("+", "")
+            moderate_val = float(moderate_str) / 100
+            return {
+                "best_case": round(1 + moderate_val * 1.5, 2),
+                "base_case": round(1 + moderate_val, 2),
+                "worst_case": round(1 + moderate_val * 0.3, 2),
+            }
+        except (ValueError, TypeError):
+            return {
+                "best_case": 1.3,
+                "base_case": 1.15,
+                "worst_case": 1.05,
+            }
+
+    @classmethod
+    def get_config_schema(cls) -> Dict[str, Any]:
+        return {"industry": {"type": "string", "default": "general"}}
