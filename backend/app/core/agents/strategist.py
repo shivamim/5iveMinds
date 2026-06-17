@@ -1,3 +1,5 @@
+
+
 import logging
 from typing import Dict, Any, Optional
 from app.core.agents.base import BaseAgent, call_groq
@@ -26,151 +28,137 @@ class StrategistAgent(BaseAgent):
 
         logger.info(f"Strategist analyzing results for {filename}")
 
-        # FIXED: Try LLM with much richer real data context
-        groq_insights = None
-        try:
-            # Build rich context from actual data
-            column_summary = []
-            for col in columns[:10]:
-                stat = column_stats.get(col, {})
-                col_type = stat.get("type", "unknown")
-                null_pct = stat.get("null_pct", 0)
-                unique_count = stat.get("unique_count", 0)
+        # Build rich context from actual data
+        column_summary = []
+        for col in columns[:10]:
+            stat = column_stats.get(col, {})
+            col_type = stat.get("type", "unknown")
+            null_pct = stat.get("null_pct", 0)
+            unique_count = stat.get("unique_count", 0)
 
-                if col_type == "numeric":
-                    column_summary.append(
-                        f"{col} (numeric): mean={stat.get('mean')}, "
-                        f"range=[{stat.get('min')}, {stat.get('max')}], "
-                        f"null={null_pct}%"
-                    )
-                elif col_type == "categorical":
-                    top_vals = list(stat.get("top_values", {}).keys())[:3]
-                    column_summary.append(
-                        f"{col} (categorical): {unique_count} unique, "
-                        f"top=[{', '.join(map(str, top_vals))}], null={null_pct}%"
-                    )
-                else:
-                    column_summary.append(f"{col} ({col_type}): null={null_pct}%")
-
-            correlations_summary = []
-            for corr in stats.get("correlations", [])[:5]:
-                correlations_summary.append(
-                    f"{corr['var1']} vs {corr['var2']}: r={corr['correlation']} "
-                    f"({corr.get('relationship', '')})"
+            if col_type == "numeric":
+                column_summary.append(
+                    f"{col} (numeric): mean={stat.get('mean')}, "
+                    f"range=[{stat.get('min')}, {stat.get('max')}], "
+                    f"null={null_pct}%"
                 )
+            elif col_type == "categorical":
+                top_vals = list(stat.get("top_values", {}).keys())[:3]
+                column_summary.append(
+                    f"{col} (categorical): {unique_count} unique, "
+                    f"top=[{', '.join(map(str, top_vals))}], null={null_pct}%"
+                )
+            else:
+                column_summary.append(f"{col} ({col_type}): null={null_pct}%")
 
-            feature_importance = ml.get("feature_importance", {})
-            top_features = sorted(
-                feature_importance.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:5] if feature_importance else []
+        correlations_summary = []
+        for corr in stats.get("correlations", [])[:5]:
+            correlations_summary.append(
+                f"{corr['var1']} vs {corr['var2']}: r={corr['correlation']} "
+                f"({corr.get('relationship', '')})"
+            )
 
-            prompt = f"""You are a senior business strategist analyzing data analytics results.
+        feature_importance = ml.get("feature_importance", {})
+        top_features = sorted(
+            feature_importance.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:5] if feature_importance else []
 
-DATASET PROFILE:
-- File: {filename}
-- Records: {row_count:,}
-- Columns: {len(columns)} ({', '.join(columns[:10])}{'...' if len(columns) > 10 else ''})
-- Quality Score: {data_quality.get('quality_score', 'N/A')}/100
+        # FIXED: Simpler prompt to avoid Groq 400 errors
+        prompt = f"""Analyze this dataset and respond with ONLY valid JSON.
 
-COLUMN DETAILS:
-{chr(10).join(column_summary)}
+DATASET: {filename} | {row_count} records | {len(columns)} columns
+QUALITY: {data_quality.get('quality_score', 'N/A')}/100
+COLUMNS: {', '.join(columns[:10])}
 
-STATISTICAL FINDINGS:
-- Correlations analyzed: {len(stats.get('correlations', []))}
-- Significant correlations: {stats.get('significant_correlations', 0)}
-{chr(10).join(correlations_summary) if correlations_summary else 'No strong correlations detected'}
+STATISTICS:
+- Correlations: {len(stats.get('correlations', []))} analyzed, {stats.get('significant_correlations', 0)} significant
+{chr(10).join(correlations_summary) if correlations_summary else 'No strong correlations'}
 
-ML MODEL RESULTS:
-- Best model: {ml.get('best_model', 'N/A')} (R²={ml.get('best_r2', 'N/A')})
-- Top features by importance: {', '.join([f'{k}={v}' for k, v in top_features])}
-- Data quality score: {ml.get('data_profile', {}).get('data_quality_score', 'N/A')}
+ML RESULTS:
+- Best model: {ml.get('best_model', 'N/A')} (R2={ml.get('best_r2', 'N/A')})
+- Top features: {', '.join([f'{k}={v:.3f}' for k, v in top_features])}
 
-BUSINESS QUESTION CONTEXT: Analyze this dataset for actionable business insights.
+Respond with ONLY this JSON structure (no markdown, no explanation):
+{{"executive_summary":"2-3 sentence business summary","business_insights":["insight 1","insight 2","insight 3","insight 4"],"key_findings":["finding 1","finding 2","finding 3"],"recommended_actions":[{{"action":"specific action","priority":"High|Medium|Low","timeline":"timeframe"}}],"recommendations":[{{"recommendation":"specific recommendation","priority":"High|Medium|Low","timeline":"timeframe","expected_outcome":"expected result"}}],"roi_projection":{{"conservative":"+10%","moderate":"+20%","optimistic":"+30%"}},"business_impact":{{"conservative":"+10%","moderate":"+20%","optimistic":"+30%"}},"risk_matrix":[{{"risk":"specific risk","likelihood":"Medium","impact":"High"}}]}}"""
 
-Respond with ONLY valid JSON (no markdown, no explanation):
-{{
-  "executive_summary": "A comprehensive 2-3 sentence summary of the analysis findings and business implications.",
-  "business_insights": ["insight 1", "insight 2", "insight 3", "insight 4"],
-  "key_findings": ["key finding 1", "key finding 2", "key finding 3"],
-  "recommended_actions": [
-    {{"action": "string", "priority": "High|Medium|Low", "timeline": "string"}},
-    {{"action": "string", "priority": "High|Medium|Low", "timeline": "string"}},
-    {{"action": "string", "priority": "High|Medium|Low", "timeline": "string"}}
-  ],
-  "recommendations": [
-    {{"recommendation": "string", "priority": "High|Medium|Low", "timeline": "string", "expected_outcome": "string"}}
-  ],
-  "roi_projection": {{"conservative": "+X%", "moderate": "+Y%", "optimistic": "+Z%"}},
-  "business_impact": {{"conservative": "+X%", "moderate": "+Y%", "optimistic": "+Z%"}},
-  "risk_matrix": [
-    {{"risk": "string", "likelihood": "High|Medium|Low", "impact": "High|Medium|Low"}}
-  ]
-}}"""
-            groq_insights = await call_groq(prompt, max_tokens=1200)
+        # Try LLM with fallback
+        groq_insights = None
+        llm_success = False
+        try:
+            groq_insights = await call_groq(prompt, max_tokens=1500)
             if groq_insights and isinstance(groq_insights, dict):
-                logger.info("Strategist received LLM-powered insights")
+                # Validate required fields exist
+                if groq_insights.get("business_insights") or groq_insights.get("recommended_actions"):
+                    llm_success = True
+                    logger.info("Strategist received LLM-powered insights")
+                else:
+                    logger.warning("LLM returned valid JSON but missing required fields")
+                    groq_insights = None
             else:
                 logger.warning("LLM returned invalid format, using fallback")
         except Exception as e:
             logger.warning(f"Groq call failed, using template-based insights: {e}")
 
-        # FIXED: Generate data-driven fallback insights that reference actual columns
+        # Generate fallback insights if LLM failed
         if not groq_insights or not isinstance(groq_insights, dict):
             groq_insights = self._generate_data_driven_insights(
                 columns, column_stats, schema, stats, ml, row_count, filename
             )
 
-        # Build final result with LLM or data-driven insights
-        business_insights = groq_insights.get("business_insights", [])
-        recommended_actions = groq_insights.get("recommended_actions", [])
-        roi_projection = groq_insights.get("roi_projection", {})
-        risk_matrix = groq_insights.get("risk_matrix", [])
+        # Extract data from LLM or fallback
+        business_insights = groq_insights.get("business_insights", []) if isinstance(groq_insights, dict) else []
+        recommended_actions = groq_insights.get("recommended_actions", []) if isinstance(groq_insights, dict) else []
+        recommendations = groq_insights.get("recommendations", []) if isinstance(groq_insights, dict) else []
+        roi_projection = groq_insights.get("roi_projection", {}) if isinstance(groq_insights, dict) else {}
+        risk_matrix = groq_insights.get("risk_matrix", []) if isinstance(groq_insights, dict) else []
 
         # Validate and sanitize ROI values
         roi_projection = self._sanitize_roi(roi_projection)
 
-        # CRITICAL FIX: Build frontend-compatible fields
+        # CRITICAL FIX: Build recommendations from recommended_actions if empty
+        if not recommendations and recommended_actions:
+            for action in recommended_actions:
+                if isinstance(action, dict):
+                    recommendations.append({
+                        "recommendation": action.get("action", ""),
+                        "priority": action.get("priority", "Medium"),
+                        "timeline": action.get("timeline", "TBD"),
+                        "expected_outcome": action.get("expected_impact", ""),
+                    })
+
         # Derive executive_summary from insights if not provided
-        executive_summary = groq_insights.get("executive_summary", "")
+        executive_summary = groq_insights.get("executive_summary", "") if isinstance(groq_insights, dict) else ""
         if not executive_summary and business_insights:
-            # Build a summary from the first 2 insights
-            summary_parts = business_insights[:2]
-            executive_summary = " ".join(summary_parts)
+            summary_parts = business_insights[:2] if isinstance(business_insights, list) else []
+            executive_summary = " ".join([str(s) for s in summary_parts])
             if len(executive_summary) > 300:
                 executive_summary = executive_summary[:297] + "..."
 
         # Derive key_findings from insights if not provided
-        key_findings = groq_insights.get("key_findings", business_insights[:4])
-
-        # Derive recommendations from recommended_actions if not provided
-        recommendations = groq_insights.get("recommendations", [])
-        if not recommendations and recommended_actions:
-            for action in recommended_actions:
-                recommendations.append({
-                    "recommendation": action.get("action", ""),
-                    "priority": action.get("priority", "Medium"),
-                    "timeline": action.get("timeline", "TBD"),
-                    "expected_outcome": action.get("expected_impact", ""),
-                })
+        key_findings = groq_insights.get("key_findings", []) if isinstance(groq_insights, dict) else []
+        if not key_findings and business_insights:
+            key_findings = business_insights[:4] if isinstance(business_insights, list) else []
 
         # Derive business_impact from roi_projection if not provided
-        business_impact = groq_insights.get("business_impact", roi_projection)
+        business_impact = groq_insights.get("business_impact", {}) if isinstance(groq_insights, dict) else {}
+        if not business_impact:
+            business_impact = roi_projection
 
         result = {
             "quality_score": round(min(75 + len(business_insights) * 3 + len(recommended_actions) * 2, 96), 1),
-            "llm_powered": groq_insights is not None and "template" not in str(groq_insights.get("_source", "")),
-            "business_insights": business_insights,
+            "llm_powered": llm_success,
+            "business_insights": business_insights if isinstance(business_insights, list) else [],
             "roi_projection": roi_projection,
             "risk_matrix": risk_matrix if risk_matrix else self._default_risks(column_stats),
-            "recommended_actions": recommended_actions,
+            "recommended_actions": recommended_actions if isinstance(recommended_actions, list) else [],
             "scenario_simulations": self._calculate_scenarios(roi_projection),
-            # CRITICAL FIX: Frontend-compatible fields
-            "executive_summary": executive_summary,
-            "key_findings": key_findings,
-            "recommendations": recommendations,
-            "business_impact": business_impact,
+            # CRITICAL FIX: Frontend-compatible fields - always populated
+            "executive_summary": executive_summary or f"Analysis of '{filename}' reveals key insights from {len(columns)} columns.",
+            "key_findings": key_findings if isinstance(key_findings, list) else [],
+            "recommendations": recommendations if isinstance(recommendations, list) else [],
+            "business_impact": business_impact if isinstance(business_impact, dict) else roi_projection,
             "model_performance": {
                 "best_model": ml.get("best_model", "N/A"),
                 "r2": ml.get("best_r2", "N/A"),
@@ -180,7 +168,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
         }
 
         self.board.post("strategy", result)
-        logger.info(f"Strategist complete: {len(business_insights)} insights, LLM={result['llm_powered']}")
+        logger.info(f"Strategist complete: {len(business_insights)} insights, LLM={llm_success}")
         return result
 
     def _generate_data_driven_insights(
@@ -212,7 +200,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             insights.append(
                 f"Strong {'positive' if top_corr['correlation'] > 0 else 'negative'} relationship "
                 f"detected between '{top_corr['var1']}' and '{top_corr['var2']}' "
-                f"(r={top_corr['correlation']}) — key driver for modeling"
+                f"(r={top_corr['correlation']}) \u2014 key driver for modeling"
             )
         elif correlations:
             insights.append(
@@ -226,7 +214,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             top_feature = max(feature_importance.items(), key=lambda x: x[1])
             insights.append(
                 f"'{top_feature[0]}' emerges as top predictive feature "
-                f"({top_feature[1]*100:.1f}% importance) — prioritize data collection here"
+                f"({top_feature[1]*100:.1f}% importance) \u2014 prioritize data collection here"
             )
 
         # Insight 4: Column-specific insights
@@ -235,12 +223,12 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 
         if len(numeric_cols) >= 3:
             insights.append(
-                f"Dataset contains {len(numeric_cols)} numeric and {len(cat_cols)} categorical features — "
+                f"Dataset contains {len(numeric_cols)} numeric and {len(cat_cols)} categorical features \u2014 "
                 f"suitable for ensemble methods with proper encoding"
             )
         elif len(cat_cols) > len(numeric_cols):
             insights.append(
-                f"Categorical-dominant schema ({len(cat_cols)} vs {len(numeric_cols)} numeric) — "
+                f"Categorical-dominant schema ({len(cat_cols)} vs {len(numeric_cols)} numeric) \u2014 "
                 f"consider target encoding or embedding approaches"
             )
 
@@ -251,7 +239,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
         ]
         if cols_with_nulls:
             insights.append(
-                f"Missing data detected in {', '.join(cols_with_nulls[:3])} — "
+                f"Missing data detected in {', '.join(cols_with_nulls[:3])} \u2014 "
                 f"imputation strategy will impact model reliability"
             )
 
@@ -289,7 +277,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             f"Analysis of '{filename}' ({row_count:,} records, {len(columns)} columns) "
             f"reveals {len(insights)} key insights. "
             f"Data quality is {quality_score:.0f}/100. "
-            f"Best performing model is {ml.get('best_model', 'ensemble')} with R²={ml.get('best_r2', 'N/A')}. "
+            f"Best performing model is {ml.get('best_model', 'ensemble')} with R\u00b2={ml.get('best_r2', 'N/A')}. "
             f"Top predictive feature is {max(feature_importance.items(), key=lambda x: x[1])[0] if feature_importance else 'N/A'}."
         )
 
@@ -308,23 +296,23 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 
         return {
             "executive_summary": exec_summary,
-            "business_insights": insights[:4],
-            "key_findings": key_findings,
-            "recommended_actions": actions[:3],
-            "recommendations": recommendations,
+            "business_insights": insights[:4] if isinstance(insights, list) else [],
+            "key_findings": key_findings if isinstance(key_findings, list) else [],
+            "recommended_actions": actions[:3] if isinstance(actions, list) else [],
+            "recommendations": recommendations if isinstance(recommendations, list) else [],
             "roi_projection": roi_projection,
             "business_impact": roi_projection,
             "risk_matrix": self._default_risks(column_stats),
-            "_source": "template"  # marker for tracking
+            "_source": "template"
         }
 
     def _sanitize_roi(self, roi: dict) -> dict:
         """Ensure ROI values are properly formatted strings."""
         if not roi:
             return {
-                "conservative": "+8%",
-                "moderate": "+15%",
-                "optimistic": "+25%"
+                "conservative": "+10%",
+                "moderate": "+20%",
+                "optimistic": "+30%"
             }
         sanitized = {}
         for key in ["conservative", "moderate", "optimistic"]:
@@ -332,7 +320,6 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             if isinstance(val, (int, float)):
                 sanitized[key] = f"+{val}%"
             elif isinstance(val, str):
-                # Ensure starts with + and ends with %
                 val = val.strip()
                 if not val.startswith(("+", "-")):
                     val = "+" + val
@@ -340,7 +327,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
                     val = val + "%"
                 sanitized[key] = val
             else:
-                defaults = {"conservative": "+8%", "moderate": "+15%", "optimistic": "+25%"}
+                defaults = {"conservative": "+10%", "moderate": "+20%", "optimistic": "+30%"}
                 sanitized[key] = defaults.get(key, "+10%")
         return sanitized
 
@@ -348,7 +335,6 @@ Respond with ONLY valid JSON (no markdown, no explanation):
         """Generate contextual risks based on data characteristics."""
         risks = []
 
-        # Check for high null rates
         high_null = any(
             stat.get("null_pct", 0) > 10
             for stat in column_stats.values()
@@ -366,7 +352,6 @@ Respond with ONLY valid JSON (no markdown, no explanation):
             "impact": "High"
         })
 
-        # Check for potential data leakage (columns with 100% uniqueness)
         id_cols = [
             col for col, stat in column_stats.items()
             if stat.get("unique_count", 0) > 0 and stat.get("unique_count") == stat.get("row_count", 0)
@@ -374,7 +359,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
         if id_cols:
             risks.append({
                 "risk": f"Potential data leakage from ID-like columns ({', '.join(id_cols[:2])})",
-                "likelihood": "High" if len(id_cols) > 0 else "Medium",
+                "likelihood": "High",
                 "impact": "High"
             })
 
