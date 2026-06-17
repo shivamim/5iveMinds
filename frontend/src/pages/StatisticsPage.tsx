@@ -13,6 +13,23 @@ import { Activity, FlaskConical, FileUp } from 'lucide-react'
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
 /**
+ * CRITICAL FIX: Parse output_data that may arrive as a JSON string
+ * from the backend instead of a parsed object.
+ */
+function parseOutputData(data: any): Record<string, any> | null {
+  if (data === null || data === undefined) return null
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data)
+      if (typeof parsed === 'object' && parsed !== null) return parsed
+    } catch { /* not valid JSON */ }
+    return null
+  }
+  if (typeof data === 'object') return data
+  return null
+}
+
+/**
  * CRITICAL FIX: Convert histogram bin data to recharts-compatible format
  * The statistician agent provides: histogram: { bin_edges: [...], frequencies: [...] }
  * We need to convert this to: [{ bin: 'label', frequency: value }, ...]
@@ -72,15 +89,15 @@ export default function StatisticsPage() {
         const executions = res.data?.executions || {}
         const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
           agent_name,
-          output_data,
+          output_data: parseOutputData(output_data) || output_data,
           status: 'completed',
         }))
 
         if (executionArray.length > 0) {
           setAgentExecutions(executionArray)
-          const statOutput = executions?.statistician
-          if (statOutput && typeof statOutput === 'object') {
-            setOutput(statOutput as Record<string, any>)
+          const statOutput = parseOutputData(executions?.statistician)
+          if (statOutput) {
+            setOutput(statOutput)
           }
         }
       } catch (err) {
@@ -94,8 +111,9 @@ export default function StatisticsPage() {
             const statExec = executions.find(
               (e: any) => e.agent_name === 'statistician' && e.output_data
             )
-            if (statExec?.output_data) {
-              setOutput(statExec.output_data)
+            const parsed = parseOutputData(statExec?.output_data)
+            if (parsed) {
+              setOutput(parsed)
             }
           }
         } catch (err2) {
@@ -107,7 +125,8 @@ export default function StatisticsPage() {
     }
 
     loadData()
-  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Re-run when agentExecutions changes in the store
+  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
 
   // Get output from store or local state
   const statisticianOutput = useMemo(() => {
