@@ -12,7 +12,7 @@ import { Brain, Trophy, Zap, FileUp } from 'lucide-react'
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6']
 
 export default function MLResultsPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
+  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions, chartsData } = useStore()
   const [fetching, setFetching] = useState(false)
   const [mlOutput, setMlOutput] = useState<Record<string, any> | null>(null)
 
@@ -27,22 +27,42 @@ export default function MLResultsPage() {
         return
       }
 
-      // Fetch from API
+      // CRITICAL FIX: Fetch from /results endpoint for normalized output_data
       setFetching(true)
       try {
-        const res = await pipelineApi.getStatus(currentRun.id)
-        const executions = res.data?.executions ?? []
-        if (executions.length > 0) {
-          setAgentExecutions(executions)
-          const mlExec = executions.find(
-            (e: any) => e.agent_name === 'ml_engineer' && e.output_data
-          )
-          if (mlExec?.output_data) {
-            setMlOutput(mlExec.output_data)
+        const res = await pipelineApi.getResults(currentRun.id)
+        const executions = res.data?.executions || {}
+        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
+          agent_name,
+          output_data,
+          status: 'completed',
+        }))
+
+        if (executionArray.length > 0) {
+          setAgentExecutions(executionArray)
+          const mlOutput = executions?.ml_engineer
+          if (mlOutput && typeof mlOutput === 'object') {
+            setMlOutput(mlOutput as Record<string, any>)
           }
         }
       } catch (err) {
-        console.error('Failed to fetch ML data:', err)
+        console.error('Failed to fetch ML data from /results:', err)
+        // Fallback to /status
+        try {
+          const res = await pipelineApi.getStatus(currentRun.id)
+          const executions = res.data?.executions ?? []
+          if (executions.length > 0) {
+            setAgentExecutions(executions)
+            const mlExec = executions.find(
+              (e: any) => e.agent_name === 'ml_engineer' && e.output_data
+            )
+            if (mlExec?.output_data) {
+              setMlOutput(mlExec.output_data)
+            }
+          }
+        } catch (err2) {
+          console.error('Failed to fetch from /status fallback:', err2)
+        }
       } finally {
         setFetching(false)
       }
@@ -57,6 +77,12 @@ export default function MLResultsPage() {
     return getAgentOutput('ml_engineer') || {}
   }, [mlOutput, agentExecutions, getAgentOutput])
 
+  // CRITICAL FIX: Also check charts data from /results for feature importance
+  const chartsFeatureImportance = useMemo(() => {
+    const fiChart = chartsData.find((c: any) => c.chart_type === 'feature_importance')
+    return fiChart?.chart_data || null
+  }, [chartsData])
+
   // Also check designer output for feature importance fallback
   const designerOutput = useMemo(() => getAgentOutput('designer') || {}, [agentExecutions, getAgentOutput])
   const designerFeatureImportance = useMemo(() => {
@@ -66,10 +92,12 @@ export default function MLResultsPage() {
   }, [designerOutput])
 
   // Extract all data with fallbacks
+  // CRITICAL FIX: Check chartsData first, then designer output, then ml_engineer output
+  const fiFromCharts = chartsFeatureImportance?.raw || chartsFeatureImportance?.features || null
   const bestModel = mlEngineerOutput.best_model || 'N/A'
   const bestR2 = mlEngineerOutput.best_r2
   const bestRmse = mlEngineerOutput.best_rmse
-  const featureImportance = mlEngineerOutput.feature_importance || designerFeatureImportance || {}
+  const featureImportance = fiFromCharts || mlEngineerOutput.feature_importance || designerFeatureImportance || {}
   const modelsEvaluated = mlEngineerOutput.models_evaluated || []
   const qualityScore = mlEngineerOutput.quality_score
   const shapSummary = mlEngineerOutput.shap_summary || mlEngineerOutput.shap_values || {}
