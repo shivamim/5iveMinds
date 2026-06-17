@@ -17,6 +17,23 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Lightbulb, Target, ListTodo, Shield, AlertTriangle, ShieldAlert, FileUp, BarChart3 } from 'lucide-react'
 
+/**
+ * CRITICAL FIX: Parse output_data that may arrive as a JSON string
+ * from the backend instead of a parsed object.
+ */
+function parseOutputData(data: any): Record<string, any> | null {
+  if (data === null || data === undefined) return null
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data)
+      if (typeof parsed === 'object' && parsed !== null) return parsed
+    } catch { /* not valid JSON */ }
+    return null
+  }
+  if (typeof data === 'object') return data
+  return null
+}
+
 export default function StrategyPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
@@ -40,15 +57,15 @@ export default function StrategyPage() {
         const executions = res.data?.executions || {}
         const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
           agent_name,
-          output_data,
+          output_data: parseOutputData(output_data) || output_data,
           status: 'completed',
         }))
 
         if (executionArray.length > 0) {
           setAgentExecutions(executionArray)
-          const stratOutput = executions?.strategist
-          if (stratOutput && typeof stratOutput === 'object') {
-            setStrategyData(stratOutput as Record<string, any>)
+          const stratOutput = parseOutputData(executions?.strategist)
+          if (stratOutput) {
+            setStrategyData(stratOutput)
           }
         }
       } catch (err) {
@@ -62,8 +79,9 @@ export default function StrategyPage() {
             const stratExec = executions.find(
               (e: any) => e.agent_name === 'strategist' && e.output_data
             )
-            if (stratExec?.output_data) {
-              setStrategyData(stratExec.output_data)
+            const parsed = parseOutputData(stratExec?.output_data)
+            if (parsed) {
+              setStrategyData(parsed)
             }
           }
         } catch (err2) {
@@ -75,7 +93,8 @@ export default function StrategyPage() {
     }
 
     loadData()
-  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Re-run when agentExecutions changes in the store
+  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
 
   // Get output from store or local state
   const strategyOutput = useMemo(() => {
