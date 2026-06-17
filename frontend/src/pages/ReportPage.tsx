@@ -8,6 +8,23 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FileText, Lightbulb, ListTodo, TrendingUp, Code } from 'lucide-react'
 
+/**
+ * CRITICAL FIX: Parse output_data that may arrive as a JSON string
+ * from the backend instead of a parsed object.
+ */
+function parseOutputData(data: any): Record<string, any> | null {
+  if (data === null || data === undefined) return null
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data)
+      if (typeof parsed === 'object' && parsed !== null) return parsed
+    } catch { /* not valid JSON */ }
+    return null
+  }
+  if (typeof data === 'object') return data
+  return null
+}
+
 export default function ReportPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
@@ -35,11 +52,12 @@ export default function ReportPage() {
         const executions = res.data?.executions ?? []
         if (executions.length > 0) {
           setAgentExecutions(executions)
-          // Extract all outputs
+          // Extract all outputs with JSON string parsing
           const outputs: Record<string, any> = {}
           for (const e of executions) {
-            if (e.output_data && typeof e.output_data === 'object') {
-              outputs[e.agent_name] = e.output_data
+            const parsed = parseOutputData(e.output_data)
+            if (parsed) {
+              outputs[e.agent_name] = parsed
             }
           }
           setAllOutputs(outputs)
@@ -52,7 +70,8 @@ export default function ReportPage() {
     }
 
     loadData()
-  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Re-run when agentExecutions changes in the store
+  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
 
   // Get strategy output from local state or store
   const strategyOutput = useMemo(() => {
