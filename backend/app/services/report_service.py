@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi import HTTPException
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models import Report, PipelineRun, ReportType, AgentExecution
 from app.schemas import ReportResponse
@@ -12,7 +12,6 @@ class ReportService:
         self.db = db
 
     async def get_or_generate_report(self, run_id: uuid.UUID, report_type: str) -> Report:
-        """Get existing report or auto-generate one from pipeline results."""
         result = await self.db.execute(
             select(Report).where(
                 Report.pipeline_run_id == run_id,
@@ -23,7 +22,6 @@ class ReportService:
         if report:
             return report
 
-        # Auto-generate from agent outputs
         run_result = await self.db.execute(select(PipelineRun).where(PipelineRun.id == run_id))
         run = run_result.scalar_one_or_none()
         if not run:
@@ -40,7 +38,7 @@ class ReportService:
             pipeline_run_id=run_id,
             report_type=ReportType(report_type),
             content=content,
-            generated_at=datetime.utcnow()
+            generated_at=datetime.now(timezone.utc)
         )
         self.db.add(report)
         await self.db.commit()
