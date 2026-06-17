@@ -510,17 +510,30 @@ class PipelineService:
         )
         executions = exec_result.scalars().all()
 
-        # CRITICAL FIX: Normalize output_data for all executions
-        for e in executions:
-            if e.output_data is not None and isinstance(e.output_data, str):
-                e.output_data = self._normalize_output_data(e.output_data)
-
+        # CRITICAL FIX: Build fresh response dicts instead of mutating SQLAlchemy objects.
+        # Some PostgreSQL drivers return JSON columns as strings. Pydantic v2's
+        # from_attributes doesn't reliably pick up in-place mutations, so we build
+        # clean dicts with normalized output_data.
         completed = sum(1 for e in executions if e.status == AgentStatus.COMPLETED)
         total = max(len(executions), 5)
         progress = (completed / total) * 100
 
+        execution_responses = []
+        for e in executions:
+            execution_responses.append({
+                "id": e.id,
+                "agent_name": e.agent_name,
+                "status": e.status.value if e.status else "pending",
+                "quality_score": e.quality_score,
+                "execution_time_ms": e.execution_time_ms,
+                "output_data": self._normalize_output_data(e.output_data),
+                "error_message": e.error_message,
+                "started_at": e.started_at,
+                "completed_at": e.completed_at,
+            })
+
         return PipelineStatusResponse(
-            run=run, executions=list(executions), progress_percent=progress
+            run=run, executions=execution_responses, progress_percent=progress
         )
 
     async def get_results(self, run_id: uuid.UUID):
@@ -537,24 +550,32 @@ class PipelineService:
         )
         executions = exec_result.scalars().all()
 
-        # FIXED: Load charts from database with fallback to designer output_data
-        chart_service = ChartService(self.db)
-        charts_data = await chart_service.get_charts(run_id)
+        # CRITICAL FIX: Isolate chart/report query errors so they don't break
+        # the entire endpoint. The frontend needs execution data at minimum.
+        try:
+            chart_service = ChartService(self.db)
+            charts_data = await chart_service.get_charts(run_id)
+        except Exception as e:
+            logger.warning(f"Chart query failed for run {run_id}: {e}")
+            charts_data = []
 
-        # FIXED: Load reports from database
-        report_result = await self.db.execute(
-            select(Report).where(Report.pipeline_run_id == run_id)
-        )
-        reports_db = report_result.scalars().all()
-        reports_data = [
-            {
-                "id": str(r.id),
-                "report_type": r.report_type.value if r.report_type else None,
-                "content": r.content,
-                "generated_at": r.generated_at.isoformat() if r.generated_at else None,
-            }
-            for r in reports_db
-        ]
+        try:
+            report_result = await self.db.execute(
+                select(Report).where(Report.pipeline_run_id == run_id)
+            )
+            reports_db = report_result.scalars().all()
+            reports_data = [
+                {
+                    "id": str(r.id),
+                    "report_type": r.report_type.value if r.report_type else None,
+                    "content": r.content,
+                    "generated_at": r.generated_at.isoformat() if r.generated_at else None,
+                }
+                for r in reports_db
+            ]
+        except Exception as e:
+            logger.warning(f"Report query failed for run {run_id}: {e}")
+            reports_data = []
 
         # CRITICAL FIX: Normalize output_data for all executions
         normalized_executions = {}
