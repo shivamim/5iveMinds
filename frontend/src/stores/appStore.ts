@@ -85,9 +85,26 @@ export function isStatusRunning(status: unknown): boolean {
 /**
  * CRITICAL FIX: Safely get output_data from an execution.
  * Ensures the value is always a dict or null.
+ * 
+ * BUG FIX: Some PostgreSQL drivers return JSON columns as strings.
+ * We now parse JSON strings back into objects.
  */
 function safeOutputData(data: unknown): Record<string, unknown> | null {
   if (data === null || data === undefined) return null
+  
+  // CRITICAL FIX: Handle JSON strings from backend
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data)
+      if (typeof parsed === 'object' && !Array.isArray(parsed) && parsed !== null) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // Not valid JSON, return null
+    }
+    return null
+  }
+  
   if (typeof data === 'object' && !Array.isArray(data)) {
     return data as Record<string, unknown>
   }
