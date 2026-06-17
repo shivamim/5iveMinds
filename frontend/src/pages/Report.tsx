@@ -1,362 +1,86 @@
-import { useSearchParams } from 'react-router-dom';
-import { FileText, FileSpreadsheet, Presentation, Globe } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { usePipeline } from '@/hooks/usePipeline';
-import { useState } from 'react';
-import { exportReport } from '@/services/api';
+// src/pages/Report.tsx
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { getPipelineResults, exportReport } from "../services/api";
+import { FileText, Download } from "lucide-react";
 
-export function Report() {
-  const [searchParams] = useSearchParams();
-  const runId = searchParams.get('run') || localStorage.getItem('lastRunId');
+export default function Report() {
+  const { run_id } = useParams<{ run_id: string }>();
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [exporting, setExporting] = useState<string | null>(null);
 
-  const { results } = usePipeline({
-    runId,
-    pollInterval: 10000,
-    autoFetch: !!runId,
-  });
+  useEffect(() => {
+    if (!run_id) return;
+    getPipelineResults(run_id)
+      .then((res) => { setData(res); setLoading(false); })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  }, [run_id]);
 
-  const report = results?.reports?.[0];
-  const content = report?.content || '';
-  const run = results?.run;
-
-  // Parse report sections from markdown content
-  const sections = parseReportContent(content);
-
-  const handleExport = async (format: 'pdf' | 'excel' | 'pptx' | 'html') => {
-    if (!runId) return;
+  const handleExport = async (format: "pdf" | "excel" | "pptx" | "html") => {
+    if (!run_id) return;
     setExporting(format);
     try {
-      const result = await exportReport(runId, { format });
-      if (result.download_url) {
-        window.open(result.download_url, '_blank');
-      }
-    } catch {
-      // Fallback: just show alert
-      alert(`Export to ${format.toUpperCase()} initiated`);
+      const blob = await exportReport(run_id, format);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `report-${run_id}.${format === "excel" ? "xlsx" : format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("Export failed: " + err.message);
     } finally {
       setExporting(null);
     }
   };
 
+  if (loading) return <div className="p-8 text-slate-400">Loading...</div>;
+  if (error) return <div className="p-8 text-red-400">Error: {error}</div>;
+  if (!data) return null;
+
+  const report = data.reports?.[0];
+  const content = report?.content || "No report generated yet.";
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+
+  const rendered = lines.map((line: string, i: number) => {
+    if (line.startsWith("# ")) return <h1 key={i} className="text-2xl font-bold mt-6 mb-3">{line.replace("# ", "")}</h1>;
+    if (line.startsWith("## ")) return <h2 key={i} className="text-xl font-semibold mt-5 mb-2 text-indigo-300">{line.replace("## ", "")}</h2>;
+    if (line.startsWith("- ")) return <li key={i} className="ml-4 text-slate-300">{line.replace("- ", "")}</li>;
+    if (line.trim() === "") return <div key={i} className="h-2" />;
+    // Handle inline bold
+    const parts = line.split(/(\*\*.*?\*\*)/g);
+    return (
+      <p key={i} className="text-slate-300">
+        {parts.map((part, idx) => {
+          if (part.startsWith("**") && part.endsWith("**")) {
+            return <span key={idx} className="font-semibold text-slate-200">{part.slice(2, -2)}</span>;
+          }
+          return <span key={idx}>{part}</span>;
+        })}
+      </p>
+    );
+  });
+
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Executive Report</h1>
-          <p className="text-gray-500 mt-1">Generated boardroom-ready analytics report</p>
-          {run && (
-            <p className="text-sm text-gray-400 mt-1">
-              Dataset: {run.dataset_name} | Question: {run.business_question}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <ExportButton
-            format="pdf"
-            icon={<FileText className="w-4 h-4" />}
-            onClick={() => handleExport('pdf')}
-            loading={exporting === 'pdf'}
-          />
-          <ExportButton
-            format="excel"
-            icon={<FileSpreadsheet className="w-4 h-4" />}
-            onClick={() => handleExport('excel')}
-            loading={exporting === 'excel'}
-          />
-          <ExportButton
-            format="pptx"
-            icon={<Presentation className="w-4 h-4" />}
-            onClick={() => handleExport('pptx')}
-            loading={exporting === 'pptx'}
-          />
-          <ExportButton
-            format="html"
-            icon={<Globe className="w-4 h-4" />}
-            onClick={() => handleExport('html')}
-            loading={exporting === 'html'}
-          />
+    <div className="p-8 max-w-4xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="w-6 h-6 text-rose-400" /> Executive Report</h1>
+        <div className="flex gap-2">
+          {(["pdf", "excel", "pptx", "html"] as const).map((fmt) => (
+            <button key={fmt} onClick={() => handleExport(fmt)} disabled={exporting === fmt}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 disabled:opacity-50 flex items-center gap-1">
+              <Download className="w-3 h-3" /> {exporting === fmt ? "..." : fmt.toUpperCase()}
+            </button>
+          ))}
         </div>
       </div>
-
-      {!content ? (
-        <Card>
-          <CardContent className="py-16">
-            <div className="text-center">
-              <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No Report Available</h3>
-              <p className="text-gray-500 max-w-md mx-auto">
-                Run a pipeline to generate an executive report. The Designer agent will create a boardroom-ready summary of all findings.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Tabs defaultValue="summary" className="space-y-4">
-          <TabsList className="bg-gray-100">
-            <TabsTrigger value="summary" className="data-[state=active]:bg-white">
-              Summary
-            </TabsTrigger>
-            <TabsTrigger value="findings" className="data-[state=active]:bg-white">
-              Key Findings
-            </TabsTrigger>
-            <TabsTrigger value="recommendations" className="data-[state=active]:bg-white">
-              Recommendations
-            </TabsTrigger>
-            <TabsTrigger value="impact" className="data-[state=active]:bg-white">
-              Business Impact
-            </TabsTrigger>
-            <TabsTrigger value="raw" className="data-[state=active]:bg-white">
-              Raw Output
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Summary Tab */}
-          <TabsContent value="summary">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Executive Summary</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="prose prose-sm max-w-none">
-                  {sections.executiveSummary ? (
-                    <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-                      {sections.executiveSummary}
-                    </div>
-                  ) : (
-                    <p className="text-gray-500">No executive summary available.</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Key Findings Tab */}
-          <TabsContent value="findings">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Key Findings</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {sections.keyFindings.length > 0 ? (
-                  <div className="space-y-3">
-                    {sections.keyFindings.map((finding, i) => (
-                      <div key={i} className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-4">
-                        <div className="w-6 h-6 rounded-full bg-amber-200 text-amber-700 flex items-center justify-center text-xs font-medium flex-shrink-0">
-                          {i + 1}
-                        </div>
-                        <p className="text-sm text-gray-800">{finding}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-gray-500">No key findings available.</p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Recommendations Tab */}
-          <TabsContent value="recommendations">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Recommendations</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {sections.recommendations.length > 0 ? (
-                  <div className="space-y-3">
-                    {sections.recommendations.map((rec, i) => (
-                      <div key={i} className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                        <div className="w-6 h-6 rounded-full bg-blue-200 text-blue-700 flex items-center justify-center text-xs font-medium flex-shrink-0">
-                          {i + 1}
-                        </div>
-                        <p className="text-sm text-gray-800">{rec}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-gray-500">No recommendations available.</p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Business Impact Tab */}
-          <TabsContent value="impact">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Business Impact</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {sections.dataQuality && (
-                  <div className="mb-6">
-                    <h4 className="text-sm font-medium text-gray-700 mb-2">Data Quality</h4>
-                    <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
-                      {sections.dataQuality}
-                    </div>
-                  </div>
-                )}
-                {sections.mlResults && (
-                  <div className="mb-6">
-                    <h4 className="text-sm font-medium text-gray-700 mb-2">ML Results</h4>
-                    <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
-                      {sections.mlResults}
-                    </div>
-                  </div>
-                )}
-                {sections.statisticalAnalysis && (
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-700 mb-2">Statistical Analysis</h4>
-                    <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
-                      {sections.statisticalAnalysis}
-                    </div>
-                  </div>
-                )}
-                {!sections.dataQuality && !sections.mlResults && !sections.statisticalAnalysis && (
-                  <p className="text-gray-500">No detailed business impact data available.</p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Raw Output Tab */}
-          <TabsContent value="raw">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base font-semibold">Raw Agent Output</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-gray-900 rounded-lg p-4 overflow-auto max-h-[600px]">
-                  <pre className="text-sm text-green-400 whitespace-pre-wrap">{content}</pre>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      )}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-8">
+        {rendered}
+      </div>
     </div>
-  );
-}
-
-// ===== Helper: Parse Report Content =====
-function parseReportContent(content: string) {
-  const sections: {
-    executiveSummary: string;
-    keyFindings: string[];
-    recommendations: string[];
-    dataQuality: string;
-    statisticalAnalysis: string;
-    mlResults: string;
-  } = {
-    executiveSummary: '',
-    keyFindings: [],
-    recommendations: [],
-    dataQuality: '',
-    statisticalAnalysis: '',
-    mlResults: '',
-  };
-
-  if (!content) return sections;
-
-  const lines = content.split('\n');
-  let currentSection = '';
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Detect sections
-    if (trimmed.startsWith('## Executive Summary')) {
-      currentSection = 'executiveSummary';
-      continue;
-    }
-    if (trimmed.startsWith('## Key Findings')) {
-      currentSection = 'keyFindings';
-      continue;
-    }
-    if (trimmed.startsWith('## Recommendations')) {
-      currentSection = 'recommendations';
-      continue;
-    }
-    if (trimmed.startsWith('## Data Quality')) {
-      currentSection = 'dataQuality';
-      continue;
-    }
-    if (trimmed.startsWith('## Statistical')) {
-      currentSection = 'statisticalAnalysis';
-      continue;
-    }
-    if (trimmed.startsWith('## ML Results')) {
-      currentSection = 'mlResults';
-      continue;
-    }
-    if (trimmed.startsWith('## Strategic')) {
-      currentSection = 'recommendations';
-      continue;
-    }
-
-    // Skip headers and empty lines
-    if (trimmed.startsWith('#') || trimmed.startsWith('**Dataset**') || trimmed.startsWith('**Records**') || trimmed.startsWith('**Question**')) {
-      continue;
-    }
-
-    // Capture content
-    if (currentSection === 'executiveSummary' && trimmed) {
-      sections.executiveSummary += trimmed + '\n';
-    }
-    if (currentSection === 'keyFindings' && trimmed.startsWith('- ')) {
-      sections.keyFindings.push(trimmed.slice(2));
-    }
-    if (currentSection === 'recommendations' && trimmed.startsWith('- ')) {
-      sections.recommendations.push(trimmed.slice(2));
-    }
-    if (currentSection === 'dataQuality' && trimmed) {
-      sections.dataQuality += trimmed + '\n';
-    }
-    if (currentSection === 'statisticalAnalysis' && trimmed) {
-      sections.statisticalAnalysis += trimmed + '\n';
-    }
-    if (currentSection === 'mlResults' && trimmed) {
-      sections.mlResults += trimmed + '\n';
-    }
-  }
-
-  // Trim whitespace
-  sections.executiveSummary = sections.executiveSummary.trim();
-  sections.dataQuality = sections.dataQuality.trim();
-  sections.statisticalAnalysis = sections.statisticalAnalysis.trim();
-  sections.mlResults = sections.mlResults.trim();
-
-  return sections;
-}
-
-function ExportButton({
-  format,
-  icon,
-  onClick,
-  loading,
-}: {
-  format: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  loading: boolean;
-}) {
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={onClick}
-      disabled={loading}
-      className="flex items-center gap-2"
-    >
-      {loading ? (
-        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-      ) : (
-        icon
-      )}
-      {format.toUpperCase()}
-    </Button>
   );
 }
