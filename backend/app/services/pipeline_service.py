@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 from fastapi import HTTPException
@@ -37,6 +38,7 @@ AGENT_PIPELINE = [
     ("strategist", StrategistAgent),
     ("designer", DesignerAgent),
 ]
+
 
 class PipelineService:
     def __init__(self, db: AsyncSession):
@@ -394,7 +396,7 @@ class PipelineService:
                 "",
                 "## ML Results",
                 f"- Best model: {ml.get('best_model', 'N/A')}",
-                f"- R² score: {ml.get('best_r2', 'N/A')}",
+                f"- R2 score: {ml.get('best_r2', 'N/A')}",
                 f"- Top feature: {max(ml.get('feature_importance', {}).items(), key=lambda x: x[1])[0] if ml.get('feature_importance') else 'N/A'}",
                 "",
                 "## Recommendations",
@@ -476,7 +478,7 @@ class PipelineService:
 
     def _normalize_output_data(self, output_data: Any) -> Optional[Dict[str, Any]]:
         """CRITICAL FIX: Ensure output_data is always a dict, never a JSON string.
-        
+
         Some PostgreSQL drivers return JSON columns as strings instead of parsed objects.
         This method handles both cases.
         """
