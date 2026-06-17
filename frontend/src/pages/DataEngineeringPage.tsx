@@ -25,23 +25,42 @@ export default function DataEngineeringPage() {
         return
       }
 
-      // Otherwise fetch from API
+      // CRITICAL FIX: Fetch from /results endpoint for normalized output_data
       setFetching(true)
       try {
-        const res = await pipelineApi.getStatus(currentRun.id)
-        const executions = res.data?.executions ?? []
-        if (executions.length > 0) {
-          setAgentExecutions(executions)
-          // After setting executions, try to get the output again
-          const dataEngineerExec = executions.find(
-            (e: any) => e.agent_name === 'data_engineer' && e.output_data
-          )
-          if (dataEngineerExec?.output_data) {
-            setOutput(dataEngineerExec.output_data)
+        const res = await pipelineApi.getResults(currentRun.id)
+        const executions = res.data?.executions || {}
+        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
+          agent_name,
+          output_data,
+          status: 'completed',
+        }))
+
+        if (executionArray.length > 0) {
+          setAgentExecutions(executionArray)
+          const deOutput = executions?.data_engineer
+          if (deOutput && typeof deOutput === 'object') {
+            setOutput(deOutput as Record<string, any>)
           }
         }
       } catch (err) {
-        console.error('Failed to fetch agent data:', err)
+        console.error('Failed to fetch from /results:', err)
+        // Fallback to /status
+        try {
+          const res = await pipelineApi.getStatus(currentRun.id)
+          const executions = res.data?.executions ?? []
+          if (executions.length > 0) {
+            setAgentExecutions(executions)
+            const dataEngineerExec = executions.find(
+              (e: any) => e.agent_name === 'data_engineer' && e.output_data
+            )
+            if (dataEngineerExec?.output_data) {
+              setOutput(dataEngineerExec.output_data)
+            }
+          }
+        } catch (err2) {
+          console.error('Failed to fetch from /status fallback:', err2)
+        }
       } finally {
         setFetching(false)
       }
