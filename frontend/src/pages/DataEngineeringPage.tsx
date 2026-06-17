@@ -9,6 +9,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Database, Wrench, AlertTriangle, FileUp } from 'lucide-react'
 
+/**
+ * CRITICAL FIX: Parse output_data that may arrive as a JSON string
+ * from the backend instead of a parsed object.
+ */
+function parseOutputData(data: any): Record<string, any> | null {
+  if (data === null || data === undefined) return null
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data)
+      if (typeof parsed === 'object' && parsed !== null) return parsed
+    } catch { /* not valid JSON */ }
+    return null
+  }
+  if (typeof data === 'object') return data
+  return null
+}
+
 export default function DataEngineeringPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
@@ -32,15 +49,15 @@ export default function DataEngineeringPage() {
         const executions = res.data?.executions || {}
         const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
           agent_name,
-          output_data,
+          output_data: parseOutputData(output_data) || output_data,
           status: 'completed',
         }))
 
         if (executionArray.length > 0) {
           setAgentExecutions(executionArray)
-          const deOutput = executions?.data_engineer
-          if (deOutput && typeof deOutput === 'object') {
-            setOutput(deOutput as Record<string, any>)
+          const deOutput = parseOutputData(executions?.data_engineer)
+          if (deOutput) {
+            setOutput(deOutput)
           }
         }
       } catch (err) {
@@ -54,8 +71,9 @@ export default function DataEngineeringPage() {
             const dataEngineerExec = executions.find(
               (e: any) => e.agent_name === 'data_engineer' && e.output_data
             )
-            if (dataEngineerExec?.output_data) {
-              setOutput(dataEngineerExec.output_data)
+            const parsed = parseOutputData(dataEngineerExec?.output_data)
+            if (parsed) {
+              setOutput(parsed)
             }
           }
         } catch (err2) {
@@ -67,7 +85,9 @@ export default function DataEngineeringPage() {
     }
 
     loadData()
-  }, [currentRun?.id, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Re-run when agentExecutions changes in the store
+    // so data arrives even if it wasn't ready on first mount.
+  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
 
   // Try to get output from store if not already loaded
   const dataEngineerOutput = useMemo(() => {
