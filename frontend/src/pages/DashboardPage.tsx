@@ -383,19 +383,19 @@ export default function DashboardPage() {
       {isCompleted && (
         <div className="flex flex-wrap gap-4">
           <Button asChild className="flex-1 min-w-[200px]">
-            <Link to="/data-engineering">View Data Engineering <ArrowRight className="ml-2 h-4 w-4" /></Link>
+            <Link to="/dashboard/data">View Data Engineering <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/statistics">View Statistics <ArrowRight className="ml-2 h-4 w-4" /></Link>
+            <Link to="/dashboard/stats">View Statistics <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/ml-results">View ML Results <ArrowRight className="ml-2 h-4 w-4" /></Link>
+            <Link to="/dashboard/ml">View ML Results <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/strategy">View Strategy <ArrowRight className="ml-2 h-4 w-4" /></Link>
+            <Link to="/dashboard/strategy">View Strategy <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <Button asChild className="flex-1 min-w-[200px]" variant="outline">
-            <Link to="/report">View Report <ArrowRight className="ml-2 h-4 w-4" /></Link>
+            <Link to="/dashboard/report">View Report <ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
         </div>
       )}
