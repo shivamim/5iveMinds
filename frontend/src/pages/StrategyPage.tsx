@@ -1,3 +1,14 @@
+/**
+ * Strategy Page - FIXED
+ *
+ * Key fixes:
+ * 1. Properly fetches strategist output data
+ * 2. Action cards show title, description, priority, and timeline
+ * 3. Insights rendered as numbered list with proper text
+ * 4. ROI projection with proper formatting
+ * 5. All tabs have content
+ */
+
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
@@ -9,54 +20,105 @@ import { Lightbulb, Target, ListTodo, Shield, AlertTriangle, ShieldAlert, FileUp
 export default function StrategyPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
+  const [strategyData, setStrategyData] = useState<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
-    const loadData = async () => {
-      const existing = getAgentOutput('strategist')
-      if (existing && Object.keys(existing).length > 0) return
 
+    const loadData = async () => {
+      // Check store first
+      const existing = getAgentOutput('strategist')
+      if (existing && Object.keys(existing).length > 0) {
+        setStrategyData(existing)
+        return
+      }
+
+      // Fetch from API
       setFetching(true)
       try {
         const res = await pipelineApi.getStatus(currentRun.id)
         const executions = res.data?.executions ?? []
         if (executions.length > 0) {
           setAgentExecutions(executions)
+          const stratExec = executions.find(
+            (e: any) => e.agent_name === 'strategist' && e.output_data
+          )
+          if (stratExec?.output_data) {
+            setStrategyData(stratExec.output_data)
+          }
         }
       } catch (err) {
-        console.error('Failed to fetch agent data:', err)
+        console.error('Failed to fetch strategy data:', err)
       } finally {
         setFetching(false)
       }
     }
+
     loadData()
   }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const strategyOutput = useMemo(() => getAgentOutput('strategist') || {}, [agentExecutions, getAgentOutput])
+  // Get output from store or local state
+  const strategyOutput = useMemo(() => {
+    if (strategyData) return strategyData
+    return getAgentOutput('strategist') || {}
+  }, [strategyData, agentExecutions, getAgentOutput])
 
+  // CRITICAL FIX: Extract insights with proper type handling
   const insights = useMemo(() => {
     const raw = strategyOutput.business_insights || strategyOutput.insights || []
-    return raw.map((item: any, i: number) => typeof item === 'string' ? item : item.description || item.text || JSON.stringify(item))
+    if (!Array.isArray(raw)) return []
+    return raw.map((item: any) => {
+      if (typeof item === 'string') return item
+      return item.description || item.text || item.insight || JSON.stringify(item)
+    }).filter((item: string) => item && item.length > 0)
   }, [strategyOutput])
 
+  // CRITICAL FIX: Extract actions with proper field mapping
   const actions = useMemo(() => {
-    const raw = strategyOutput.recommended_actions || strategyOutput.actions || strategyOutput.recommendations || []
-    if (raw.length === 0 && insights.length > 0) {
+    // Try recommended_actions first, then recommendations, then fall back to insights
+    let raw = strategyOutput.recommended_actions || []
+    if (!Array.isArray(raw) || raw.length === 0) {
+      raw = strategyOutput.recommendations || []
+    }
+
+    // If still no actions, derive from insights
+    if ((!Array.isArray(raw) || raw.length === 0) && insights.length > 0) {
       return insights.slice(0, 3).map((insight: string, i: number) => ({
-        action: `Action ${i + 1}`,
+        action: `Action ${i + 1}: ${insight.substring(0, 60)}${insight.length > 60 ? '...' : ''}`,
         description: insight,
         priority: i === 0 ? 'High' : 'Medium',
         timeline: 'TBD',
         expected_impact: 'Derived from analysis insight',
       }))
     }
-    return raw.map((a: any, i: number) => ({
-      action: a.action || a.title || a.recommendation || `Action ${i + 1}`,
-      description: a.description || a.reason || a.impact || '',
-      priority: a.priority || a.urgency || 'Medium',
-      timeline: a.timeline || a.timeframe || 'TBD',
-      expected_impact: a.expected_impact || a.expected_outcome || '',
-    }))
+
+    if (!Array.isArray(raw)) return []
+
+    return raw.map((a: any, i: number) => {
+      if (typeof a === 'string') {
+        return {
+          action: `Action ${i + 1}`,
+          description: a,
+          priority: 'Medium',
+          timeline: 'TBD',
+          expected_impact: '',
+        }
+      }
+      // CRITICAL FIX: Try multiple field names for action title
+      const actionTitle = a.action
+        || a.title
+        || a.recommendation
+        || a.name
+        || `Action ${i + 1}`
+
+      return {
+        action: actionTitle,
+        description: a.description || a.reason || a.impact || a.details || '',
+        priority: a.priority || a.urgency || 'Medium',
+        timeline: a.timeline || a.timeframe || a.deadline || 'TBD',
+        expected_impact: a.expected_impact || a.expected_outcome || a.outcome || '',
+      }
+    })
   }, [strategyOutput, insights])
 
   const roi = strategyOutput.roi_projection || {}
@@ -65,14 +127,37 @@ export default function StrategyPage() {
   const qualityScore = strategyOutput.quality_score
   const executiveSummary = strategyOutput.executive_summary || ''
 
-  const swot = useMemo(() => strategyOutput.swot || {
-    strengths: insights.filter((i: string) => i.toLowerCase().includes('strong') || i.toLowerCase().includes('quality')),
-    weaknesses: insights.filter((i: string) => i.toLowerCase().includes('weak') || i.toLowerCase().includes('missing') || i.toLowerCase().includes('cleanup')),
-    opportunities: insights.filter((i: string) => i.toLowerCase().includes('opportunit') || i.toLowerCase().includes('predict') || i.toLowerCase().includes('feature')),
-    threats: risks.map((r: any) => r.risk || r.threat || ''),
+  // SWOT analysis
+  const swot = useMemo(() => {
+    const defaultSwot = {
+      strengths: insights.filter((i: string) =>
+        i.toLowerCase().includes('strong') ||
+        i.toLowerCase().includes('quality') ||
+        i.toLowerCase().includes('good') ||
+        i.toLowerCase().includes('high')
+      ),
+      weaknesses: insights.filter((i: string) =>
+        i.toLowerCase().includes('weak') ||
+        i.toLowerCase().includes('missing') ||
+        i.toLowerCase().includes('cleanup') ||
+        i.toLowerCase().includes('poor')
+      ),
+      opportunities: insights.filter((i: string) =>
+        i.toLowerCase().includes('opportunit') ||
+        i.toLowerCase().includes('predict') ||
+        i.toLowerCase().includes('feature') ||
+        i.toLowerCase().includes('improve')
+      ),
+      threats: risks.map((r: any) => r.risk || r.threat || '').filter((r: string) => r.length > 0),
+    }
+    return strategyOutput.swot || defaultSwot
   }, [strategyOutput, insights, risks])
 
-  const hasData = insights.length > 0 || actions.length > 0 || executiveSummary
+  // CRITICAL FIX: More lenient hasData check
+  const hasData = insights.length > 0
+    || actions.length > 0
+    || executiveSummary
+    || Object.keys(roi).length > 0
 
   if (!currentRun) {
     return (
@@ -104,6 +189,7 @@ export default function StrategyPage() {
         <p className="text-sm text-muted-foreground mt-1">Analysis for: {currentRun.dataset_name}</p>
       </div>
 
+      {/* Executive Summary */}
       {executiveSummary && (
         <Card className="border-l-4 border-l-primary">
           <CardContent className="p-4">
@@ -128,6 +214,7 @@ export default function StrategyPage() {
           <TabsTrigger value="roi">ROI</TabsTrigger>
         </TabsList>
 
+        {/* Insights Tab */}
         <TabsContent value="insights" className="space-y-4">
           <Card>
             <CardHeader>
@@ -158,6 +245,7 @@ export default function StrategyPage() {
           </Card>
         </TabsContent>
 
+        {/* Actions Tab */}
         <TabsContent value="actions" className="space-y-4">
           <Card>
             <CardHeader>
@@ -205,6 +293,7 @@ export default function StrategyPage() {
           </Card>
         </TabsContent>
 
+        {/* SWOT Tab */}
         <TabsContent value="swot" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Card className="border-l-4 border-l-green-500">
@@ -220,7 +309,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.strengths.map((s: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-green-500">✓</span> {s}</li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-green-500">&#10003;</span> {s}</li>
                     ))}
                   </ul>
                 )}
@@ -260,7 +349,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.opportunities.map((o: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-blue-500">→</span> {o}</li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-blue-500">&#8594;</span> {o}</li>
                     ))}
                   </ul>
                 )}
@@ -280,7 +369,7 @@ export default function StrategyPage() {
                 ) : (
                   <ul className="space-y-2">
                     {swot.threats.map((t: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-red-500">⚠</span> {t}</li>
+                      <li key={i} className="text-sm flex gap-2"><span className="text-red-500">&#9888;</span> {t}</li>
                     ))}
                   </ul>
                 )}
@@ -289,6 +378,7 @@ export default function StrategyPage() {
           </div>
         </TabsContent>
 
+        {/* ROI Tab */}
         <TabsContent value="roi" className="space-y-4">
           <Card>
             <CardHeader>
@@ -342,7 +432,7 @@ export default function StrategyPage() {
                 <div className="space-y-2">
                   {risks.map((risk: any, idx: number) => (
                     <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                      <span className="font-medium">{risk.risk || risk.threat || '—'}</span>
+                      <span className="font-medium">{risk.risk || risk.threat || '\u2014'}</span>
                       <div className="flex gap-2">
                         <Badge variant={risk.likelihood === 'High' ? 'destructive' : risk.likelihood === 'Medium' ? 'secondary' : 'outline'}>
                           Likelihood: {risk.likelihood || 'N/A'}
