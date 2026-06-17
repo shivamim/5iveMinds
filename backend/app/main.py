@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -14,12 +15,23 @@ from app.models import Base
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create tables on startup if they don't exist."""
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("FiveMinds API started — tables ensured")
+    yield
+    await async_engine.dispose()
+    logger.info("FiveMinds API shutdown — engine disposed")
+
 app = FastAPI(
     title="FiveMinds API",
     description="Autonomous Multi-Agent Intelligence for End-to-End Analytics",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS — must list exact origins when allow_credentials=True
@@ -47,13 +59,6 @@ async def fiveminds_exception_handler(request: Request, exc: FiveMindsException)
         status_code=exc.status_code,
         content={"detail": exc.detail, "error_code": exc.error_code}
     )
-
-@app.on_event("startup")
-async def startup():
-    """Create tables on startup if they don't exist."""
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("FiveMinds API started — tables ensured")
 
 # Routers
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
