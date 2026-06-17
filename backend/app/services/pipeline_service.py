@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 from fastapi import HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import time
 import json
@@ -40,13 +40,11 @@ AGENT_PIPELINE = [
     ("designer", DesignerAgent),
 ]
 
-
 class PipelineService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def create_run(self, request: PipelineRunCreate) -> PipelineRun:
-        """Create a new pipeline run linked to the dataset by UUID."""
         dataset_name = str(request.dataset_id)
         dataset_id = request.dataset_id
 
@@ -94,7 +92,6 @@ class PipelineService:
         ws_manager: WebSocketManager,
         session_maker: async_sessionmaker,
     ):
-        """Create a fresh DB session for the background task and run the pipeline."""
         async with session_maker() as db:
             self.db = db
             await self.execute_pipeline(run_id, ws_manager)
@@ -102,11 +99,9 @@ class PipelineService:
     async def execute_pipeline(
         self, run_id: uuid.UUID, ws_manager: WebSocketManager
     ):
-        """Execute the full agent pipeline with proper dataset loading and chart/report persistence."""
         start_time = time.time()
         board = MessageBoard()
 
-        # Load dataset context onto message board
         try:
             result = await self.db.execute(
                 select(PipelineRun).where(PipelineRun.id == run_id)
@@ -165,11 +160,10 @@ class PipelineService:
             )
             raise HTTPException(500, f"Failed to load dataset: {e}")
 
-        # Update run status to running
         await self.db.execute(
             update(PipelineRun)
             .where(PipelineRun.id == run_id)
-            .values(status=PipelineStatus.RUNNING, started_at=datetime.utcnow())
+            .values(status=PipelineStatus.RUNNING, started_at=datetime.now(timezone.utc))
         )
         await self.db.commit()
         logger.info(f"Pipeline run {run_id} started")
@@ -184,7 +178,7 @@ class PipelineService:
                 pipeline_run_id=run_id,
                 agent_name=agent_name,
                 status=AgentStatus.RUNNING,
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             self.db.add(execution)
             await self.db.commit()
@@ -201,7 +195,6 @@ class PipelineService:
 
             try:
                 agent = AgentClass(board)
-                # Progress updates
                 for p in [0.25, 0.5, 0.75]:
                     await asyncio.sleep(0.3)
                     await ws_manager.broadcast(
@@ -217,15 +210,10 @@ class PipelineService:
                 result_data = await agent.execute()
                 all_results[agent_name] = result_data
 
-                # Persist charts from designer to charts table
                 if agent_name == "designer":
                     await self._persist_charts(run_id, result_data)
-
-                # Persist report from designer to reports table
-                if agent_name == "designer":
                     await self._persist_report(run_id, result_data, board)
 
-                # Quality score based on actual work done
                 quality_score = self._calculate_quality_score(agent_name, result_data)
                 exec_time = int((time.time() - exec_start) * 1000)
 
@@ -233,7 +221,7 @@ class PipelineService:
                 execution.quality_score = quality_score
                 execution.execution_time_ms = exec_time
                 execution.output_data = result_data
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(timezone.utc)
                 quality_scores.append(quality_score)
 
                 await ws_manager.broadcast(
@@ -254,7 +242,7 @@ class PipelineService:
                 logger.error(f"Agent {agent_name} failed for run {run_id}: {e}", exc_info=True)
                 execution.status = AgentStatus.FAILED
                 execution.error_message = str(e)
-                execution.completed_at = datetime.utcnow()
+                execution.completed_at = datetime.now(timezone.utc)
 
                 await ws_manager.broadcast(
                     run_id,
@@ -277,7 +265,7 @@ class PipelineService:
             .where(PipelineRun.id == run_id)
             .values(
                 status=PipelineStatus.COMPLETED,
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
                 total_time_ms=total_time,
                 quality_score_avg=avg_quality,
             )
@@ -300,7 +288,6 @@ class PipelineService:
         )
 
     async def _persist_charts(self, run_id: uuid.UUID, designer_result: dict):
-        """Save designer chart specs to the charts table."""
         chart_specs = designer_result.get("chart_specs", [])
         if not chart_specs:
             logger.warning(f"No chart specs to persist for run {run_id}")
@@ -330,7 +317,6 @@ class PipelineService:
                 pass
 
     def _make_json_serializable(self, obj: Any) -> Any:
-        """Convert numpy types, sets, and other non-JSON-serializable objects to Python native types."""
         if obj is None:
             return None
         if isinstance(obj, (str, int, float, bool)):
@@ -357,7 +343,6 @@ class PipelineService:
             return None
 
     async def _persist_report(self, run_id: uuid.UUID, designer_result: dict, board: MessageBoard):
-        """Save executive report to reports table."""
         try:
             strategy = board.get("strategy", {})
             stats = board.get("statistics", {})
@@ -417,7 +402,6 @@ class PipelineService:
                 pass
 
     def _calculate_quality_score(self, agent_name: str, result_data: dict) -> float:
-        """Calculate quality score based on actual analysis depth."""
         base_score = 75.0
 
         if agent_name == "data_engineer":
@@ -470,12 +454,6 @@ class PipelineService:
 
         return round(base_score, 1)
 
-    # ========================================================================
-    # CRITICAL FIX: get_status and get_results now return PLAIN DICTS.
-    # This bypasses Pydantic v2 serialization which was converting JSON
-    # objects back into strings in some asyncpg + PostgreSQL configurations.
-    # ========================================================================
-
     async def get_status(self, run_id: uuid.UUID):
         result = await self.db.execute(
             select(PipelineRun).where(PipelineRun.id == run_id)
@@ -496,7 +474,6 @@ class PipelineService:
         execution_responses = []
         for e in executions:
             od = e.output_data
-            # CRITICAL: asyncpg sometimes returns JSON as a string
             if isinstance(od, str):
                 try:
                     od = json.loads(od)
