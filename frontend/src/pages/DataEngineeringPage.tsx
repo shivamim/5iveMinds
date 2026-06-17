@@ -1,3 +1,5 @@
+
+
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
@@ -10,19 +12,33 @@ import { Database, Wrench, AlertTriangle, FileUp } from 'lucide-react'
 export default function DataEngineeringPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
+  const [output, setOutput] = useState<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
-    const loadData = async () => {
-      const existing = getAgentOutput('data_engineer')
-      if (existing && Object.keys(existing).length > 0) return
 
+    const loadData = async () => {
+      // First check if we already have data in the store
+      const existing = getAgentOutput('data_engineer')
+      if (existing && Object.keys(existing).length > 0) {
+        setOutput(existing)
+        return
+      }
+
+      // Otherwise fetch from API
       setFetching(true)
       try {
         const res = await pipelineApi.getStatus(currentRun.id)
         const executions = res.data?.executions ?? []
         if (executions.length > 0) {
           setAgentExecutions(executions)
+          // After setting executions, try to get the output again
+          const dataEngineerExec = executions.find(
+            (e: any) => e.agent_name === 'data_engineer' && e.output_data
+          )
+          if (dataEngineerExec?.output_data) {
+            setOutput(dataEngineerExec.output_data)
+          }
         }
       } catch (err) {
         console.error('Failed to fetch agent data:', err)
@@ -30,22 +46,42 @@ export default function DataEngineeringPage() {
         setFetching(false)
       }
     }
+
     loadData()
   }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const dataEngineerOutput = useMemo(() => getAgentOutput('data_engineer') || {}, [agentExecutions, getAgentOutput])
+  // Try to get output from store if not already loaded
+  const dataEngineerOutput = useMemo(() => {
+    if (output) return output
+    const fromStore = getAgentOutput('data_engineer')
+    return fromStore || {}
+  }, [output, agentExecutions, getAgentOutput])
 
-  const schema = dataEngineerOutput.schema || dataEngineerOutput.inferred_schema || {}
-  const columns = dataEngineerOutput.columns || Object.keys(schema)
-  const imputation = dataEngineerOutput.imputation || dataEngineerOutput.imputation_log || []
-  const outlierDetails = dataEngineerOutput.outlier_details || dataEngineerOutput.outliers || []
+  // CRITICAL FIX: Check multiple possible schema field names
+  const schema = dataEngineerOutput.schema
+    || dataEngineerOutput.inferred_schema
+    || dataEngineerOutput.data_types
+    || {}
+  const columns = dataEngineerOutput.columns
+    || (schema ? Object.keys(schema) : [])
+    || []
+  const imputation = dataEngineerOutput.imputation
+    || dataEngineerOutput.imputation_log
+    || []
+  const outlierDetails = dataEngineerOutput.outlier_details
+    || dataEngineerOutput.outliers
+    || []
   const qualityScore = dataEngineerOutput.quality_score ?? dataEngineerOutput.data_quality_score ?? null
   const rowCount = dataEngineerOutput.row_count ?? 0
   const columnCount = dataEngineerOutput.column_count ?? columns.length
   const missingValuesPct = dataEngineerOutput.missing_values_pct ?? 0
   const columnQuality = dataEngineerOutput.column_quality || []
 
-  const hasData = columns.length > 0 || Object.keys(schema).length > 0 || qualityScore !== null
+  // CRITICAL FIX: More lenient hasData check - show data if ANY field is present
+  const hasData = columns.length > 0
+    || Object.keys(schema).length > 0
+    || qualityScore !== null
+    || rowCount > 0
 
   if (!currentRun) {
     return (
@@ -124,12 +160,16 @@ export default function DataEngineeringPage() {
                     {columns.map((col: string) => {
                       const colSchema = schema[col] || {}
                       const colQuality = columnQuality.find((c: any) => c.column === col) || {}
+                      // CRITICAL FIX: Handle both { type: ... } and direct string type formats
+                      const colType = colSchema.type
+                        || colQuality.type
+                        || (typeof colSchema === 'string' ? colSchema : 'unknown')
                       return (
                         <TableRow key={col}>
                           <TableCell className="font-medium">{col}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="capitalize">
-                              {colSchema.type || colQuality.type || 'unknown'}
+                              {colType}
                             </Badge>
                           </TableCell>
                           <TableCell>{colSchema.null_pct ?? colQuality.null_pct ?? 0}%</TableCell>
@@ -137,7 +177,9 @@ export default function DataEngineeringPage() {
                           <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate">
                             {Array.isArray(colSchema.sample_values)
                               ? colSchema.sample_values.slice(0, 3).join(', ')
-                              : 'N/A'}
+                              : colSchema.mean !== undefined
+                                ? `mean: ${colSchema.mean}`
+                                : 'N/A'}
                           </TableCell>
                         </TableRow>
                       )
@@ -158,7 +200,7 @@ export default function DataEngineeringPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {imputation.length === 0 ? (
+              {(!imputation || imputation.length === 0) ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Wrench className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p>No imputation was needed. All columns have complete data.</p>
@@ -176,9 +218,9 @@ export default function DataEngineeringPage() {
                   <TableBody>
                     {imputation.map((item: any, idx: number) => (
                       <TableRow key={idx}>
-                        <TableCell className="font-medium">{item.column || item.col || '—'}</TableCell>
+                        <TableCell className="font-medium">{item.column || item.col || '\u2014'}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize">{item.strategy || item.method || '—'}</Badge>
+                          <Badge variant="outline" className="capitalize">{item.strategy || item.method || '\u2014'}</Badge>
                         </TableCell>
                         <TableCell>{item.filled_count || item.count || 0}</TableCell>
                       </TableRow>
@@ -199,7 +241,7 @@ export default function DataEngineeringPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {outlierDetails.length === 0 ? (
+              {(!outlierDetails || outlierDetails.length === 0) ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p>No outliers detected in the dataset.</p>
@@ -212,7 +254,7 @@ export default function DataEngineeringPage() {
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start">
                           <div>
-                            <h4 className="font-semibold">{detail.column || detail.col || '—'}</h4>
+                            <h4 className="font-semibold">{detail.column || detail.col || '\u2014'}</h4>
                             <p className="text-sm text-muted-foreground">
                               {detail.count || detail.outlier_count || 0} outliers detected
                             </p>
