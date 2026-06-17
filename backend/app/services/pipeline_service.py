@@ -13,6 +13,8 @@ from app.models import (
     PipelineStatus,
     AgentStatus,
     Dataset,
+    Chart,
+    Report,
 )
 from app.schemas import PipelineRunCreate, PipelineStatusResponse
 from app.core.orchestrator import Orchestrator
@@ -35,7 +37,6 @@ AGENT_PIPELINE = [
     ("designer", DesignerAgent),
 ]
 
-
 class PipelineService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -45,7 +46,6 @@ class PipelineService:
         dataset_name = str(request.dataset_id)
         dataset_id = request.dataset_id
 
-        # FIXED: Lookup dataset and store BOTH id and name
         try:
             result = await self.db.execute(
                 select(Dataset).where(Dataset.id == request.dataset_id)
@@ -68,7 +68,6 @@ class PipelineService:
             logger.error(f"Failed to lookup dataset for pipeline run: {e}", exc_info=True)
             raise HTTPException(500, f"Failed to lookup dataset: {e}")
 
-        # FIXED: Store dataset_id (UUID) for reliable lookup during execution
         run = PipelineRun(
             dataset_id=dataset_id,
             dataset_name=dataset_name,
@@ -99,12 +98,11 @@ class PipelineService:
     async def execute_pipeline(
         self, run_id: uuid.UUID, ws_manager: WebSocketManager
     ):
-        """Execute the full agent pipeline with proper dataset loading."""
+        """Execute the full agent pipeline with proper dataset loading and chart/report persistence."""
         start_time = time.time()
         board = MessageBoard()
 
-        # FIXED: Load dataset context onto message board using dataset_id (UUID)
-        # NOT filename - this was the root cause of the "same output" bug
+        # Load dataset context onto message board
         try:
             result = await self.db.execute(
                 select(PipelineRun).where(PipelineRun.id == run_id)
@@ -116,7 +114,6 @@ class PipelineService:
                 raise HTTPException(404, f"Pipeline run {run_id} not found")
 
             if run.dataset_id:
-                # FIXED: Use dataset_id (UUID) for reliable lookup
                 ds_result = await self.db.execute(
                     select(Dataset).where(Dataset.id == run.dataset_id)
                 )
@@ -126,7 +123,6 @@ class PipelineService:
                     schema = ds.schema or {}
                     columns = list(schema.keys())
 
-                    # FIXED: Pass FULL schema info to board so agents can do real analysis
                     board.post(
                         "dataset",
                         {
@@ -136,9 +132,7 @@ class PipelineService:
                             "column_count": ds.column_count,
                             "columns": columns,
                             "schema": schema,
-                            # Include column stats for real analysis
                             "column_stats": ds.column_stats or {},
-                            # Include sample data for context-aware insights
                             "sample_data": ds.sample_data or [],
                         },
                     )
@@ -177,6 +171,7 @@ class PipelineService:
         logger.info(f"Pipeline run {run_id} started")
 
         quality_scores = []
+        all_results = {}
 
         for agent_name, AgentClass in AGENT_PIPELINE:
             exec_start = time.time()
@@ -216,8 +211,17 @@ class PipelineService:
                     )
 
                 result_data = await agent.execute()
+                all_results[agent_name] = result_data
 
-                # FIXED: Quality score based on actual work done, not random
+                # FIXED: Persist charts from designer to charts table
+                if agent_name == "designer":
+                    await self._persist_charts(run_id, result_data)
+
+                # FIXED: Persist report from designer to reports table
+                if agent_name == "designer":
+                    await self._persist_report(run_id, result_data, board)
+
+                # Quality score based on actual work done
                 quality_score = self._calculate_quality_score(agent_name, result_data)
                 exec_time = int((time.time() - exec_start) * 1000)
 
@@ -291,12 +295,92 @@ class PipelineService:
             },
         )
 
+    async def _persist_charts(self, run_id: uuid.UUID, designer_result: dict):
+        """CRITICAL FIX: Save designer chart specs to the charts table."""
+        chart_specs = designer_result.get("chart_specs", [])
+        if not chart_specs:
+            logger.warning(f"No chart specs to persist for run {run_id}")
+            return
+
+        for spec in chart_specs:
+            chart = Chart(
+                pipeline_run_id=run_id,
+                agent_name="designer",
+                chart_type=spec.get("type", "unknown"),
+                chart_data=spec.get("data", {}),
+                plotly_spec=spec,  # Store full spec for frontend
+                generated_at=datetime.utcnow(),
+            )
+            self.db.add(chart)
+        
+        await self.db.commit()
+        logger.info(f"Persisted {len(chart_specs)} charts for run {run_id}")
+
+    async def _persist_report(self, run_id: uuid.UUID, designer_result: dict, board: MessageBoard):
+        """CRITICAL FIX: Save executive report to reports table."""
+        try:
+            # Build report content from all board data
+            strategy = board.get("strategy", {})
+            stats = board.get("statistics", {})
+            ml = board.get("ml_results", {})
+            data_quality = board.get("data_quality", {})
+            dataset = board.get("dataset", {})
+
+            # Build markdown report content
+            lines = [
+                f"# FiveMinds Executive Report",
+                f"**Dataset:** {dataset.get('filename', 'Unknown')}",
+                f"**Records:** {dataset.get('row_count', 0)} | **Columns:** {dataset.get('column_count', 0)}",
+                "",
+                "## Executive Summary",
+                strategy.get("executive_summary", "Analysis completed successfully."),
+                "",
+                "## Key Findings",
+            ]
+            for finding in strategy.get("key_findings", []):
+                lines.append(f"- {finding}")
+
+            lines.extend([
+                "",
+                "## Data Quality",
+                f"- Score: {data_quality.get('quality_score', 'N/A')}/100",
+                f"- Missing values: {data_quality.get('missing_values_pct', 0)}%",
+                f"- Outliers detected: {data_quality.get('outliers_detected', 0)}",
+                "",
+                "## Statistical Analysis",
+                f"- Correlations analyzed: {len(stats.get('correlations', []))}",
+                f"- Significant correlations: {stats.get('significant_correlations', 0)}",
+                "",
+                "## ML Results",
+                f"- Best model: {ml.get('best_model', 'N/A')}",
+                f"- R² score: {ml.get('best_r2', 'N/A')}",
+                f"- Top feature: {max(ml.get('feature_importance', {}).items(), key=lambda x: x[1])[0] if ml.get('feature_importance') else 'N/A'}",
+                "",
+                "## Recommendations",
+            ])
+            for rec in strategy.get("recommendations", []):
+                lines.append(f"- **{rec.get('recommendation', '')}** ({rec.get('priority', 'Medium')} priority) — {rec.get('timeline', 'TBD')}")
+
+            content = "\n".join(lines)
+
+            report = Report(
+                pipeline_run_id=run_id,
+                report_type="executive",
+                content=content,
+                generated_at=datetime.utcnow(),
+            )
+            self.db.add(report)
+            await self.db.commit()
+            logger.info(f"Persisted executive report for run {run_id}")
+        except Exception as e:
+            logger.error(f"Failed to persist report for run {run_id}: {e}")
+            # Don't fail the pipeline for report persistence issues
+
     def _calculate_quality_score(self, agent_name: str, result_data: dict) -> float:
-        """Calculate quality score based on actual analysis depth, not random."""
+        """Calculate quality score based on actual analysis depth."""
         base_score = 75.0
 
         if agent_name == "data_engineer":
-            # Score based on coverage of columns analyzed
             columns_analyzed = result_data.get("columns_analyzed", 0)
             schema_inferred = result_data.get("schema_inferred", False)
             quality_checks = result_data.get("quality_checks", {})
@@ -368,6 +452,7 @@ class PipelineService:
         )
 
     async def get_results(self, run_id: uuid.UUID):
+        """CRITICAL FIX: Return charts and reports from database."""
         result = await self.db.execute(
             select(PipelineRun).where(PipelineRun.id == run_id)
         )
@@ -380,6 +465,38 @@ class PipelineService:
         )
         executions = exec_result.scalars().all()
 
+        # FIXED: Load charts from database
+        chart_result = await self.db.execute(
+            select(Chart).where(Chart.pipeline_run_id == run_id)
+        )
+        charts_db = chart_result.scalars().all()
+        charts_data = [
+            {
+                "id": str(c.id),
+                "agent_name": c.agent_name,
+                "chart_type": c.chart_type,
+                "chart_data": c.chart_data,
+                "plotly_spec": c.plotly_spec,
+                "generated_at": c.generated_at.isoformat() if c.generated_at else None,
+            }
+            for c in charts_db
+        ]
+
+        # FIXED: Load reports from database
+        report_result = await self.db.execute(
+            select(Report).where(Report.pipeline_run_id == run_id)
+        )
+        reports_db = report_result.scalars().all()
+        reports_data = [
+            {
+                "id": str(r.id),
+                "report_type": r.report_type.value if r.report_type else None,
+                "content": r.content,
+                "generated_at": r.generated_at.isoformat() if r.generated_at else None,
+            }
+            for r in reports_db
+        ]
+
         return {
             "run": {
                 "id": str(run.id),
@@ -391,8 +508,8 @@ class PipelineService:
                 "total_time_ms": run.total_time_ms,
             },
             "executions": {e.agent_name: e.output_data for e in executions},
-            "charts": [],
-            "reports": [],
+            "charts": charts_data,
+            "reports": reports_data,
         }
 
     async def get_logs(self, run_id: uuid.UUID):
