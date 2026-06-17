@@ -8,13 +8,14 @@ from app.models import Chart, AgentExecution
 
 logger = logging.getLogger(__name__)
 
+
 class ChartService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def get_charts(self, run_id: uuid.UUID):
         """Get all charts for a pipeline run with full data.
-        
+
         CRITICAL FIX: Falls back to reading chart specs from designer's
         output_data in agent_executions table if charts table is empty.
         This handles cases where _persist_charts failed or wasn't called.
