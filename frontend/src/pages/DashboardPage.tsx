@@ -1,13 +1,6 @@
 /**
- * Dashboard Page - FIXED
- *
- * Key fixes:
- * 1. Quality score handles all edge cases (string, number, null, >100)
- * 2. Status comparison uses normalizeStatus helper
- * 3. Execution data display handles empty output_data
- * 4. Added useEffect to fetch status immediately when currentRun changes
+ * Dashboard Page
  */
-
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
@@ -38,10 +31,6 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   designer: 'Designer',
 }
 
-/**
- * CRITICAL FIX: Robust quality score calculation.
- * Handles string, number, null, undefined, and values > 100.
- */
 function calculateOverallQuality(qualityScoreAvg: unknown): number | null {
   if (qualityScoreAvg === null || qualityScoreAvg === undefined) return null
   let q: number
@@ -53,10 +42,8 @@ function calculateOverallQuality(qualityScoreAvg: unknown): number | null {
     return null
   }
   if (isNaN(q)) return null
-  // Handle values that were accidentally multiplied (e.g., 9300 instead of 93)
   if (q > 1000) q = q / 100
   if (q > 100) q = q / 100
-  // Clamp to 0-100 range
   return Math.round(Math.max(0, Math.min(100, q)))
 }
 
@@ -66,26 +53,21 @@ export default function DashboardPage() {
   const [status, setStatus] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const intervalRef = useRef<<ReturnType<<typeof setInterval> | null>(null)
 
   const fetchStatus = useCallback(async () => {
     if (!currentRun?.id) return
     try {
-      // CRITICAL FIX: Fetch both /status and /results endpoints
       const [statusRes, resultsRes] = await Promise.all([
         pipelineApi.getStatus(currentRun.id),
-        pipelineApi.getResults(currentRun.id).catch(() => null), // Don't fail if /results errors
+        pipelineApi.getResults(currentRun.id).catch(() => null),
       ])
 
-      const res = statusRes
-
-      // CRITICAL FIX: Handle both old response format (run/executions) and new format
-      const responseData = res.data || {}
+      const responseData = statusRes.data || {}
       const runData = responseData.run || {}
       const executions = responseData.executions ?? []
       const progressPercent = responseData.progress_percent ?? 0
 
-      // CRITICAL FIX: Normalize the status from the run data
       const normalizedStatus = normalizeStatus(runData.status || 'loading')
 
       const normalizedData = {
@@ -103,17 +85,26 @@ export default function DashboardPage() {
 
       setStatus(normalizedData)
 
-      // CRITICAL FIX: Only update executions if we got valid data
+      // CRITICAL FIX: Parse JSON strings before storing in the global store
       if (executions.length > 0) {
-        setAgentExecutions(executions)
+        const parsedExecutions = executions.map((e: any) => {
+          let od = e.output_data
+          if (typeof od === 'string') {
+            try {
+              od = JSON.parse(od)
+            } catch {
+              od = null
+            }
+          }
+          return { ...e, output_data: od }
+        })
+        setAgentExecutions(parsedExecutions)
       }
 
-      // CRITICAL FIX: Store charts data from /results endpoint
       if (resultsRes?.data?.charts && Array.isArray(resultsRes.data.charts)) {
         setChartsData(resultsRes.data.charts)
       }
 
-      // Update currentRun status
       if (isStatusCompleted(normalizedStatus) || isStatusFailed(normalizedStatus)) {
         setCurrentRun({
           ...currentRun,
@@ -132,7 +123,7 @@ export default function DashboardPage() {
       setError(err.message || 'Failed to fetch pipeline status')
       setLoading(false)
     }
-  }, [currentRun, setCurrentRun, setAgentExecutions])
+  }, [currentRun, setCurrentRun, setAgentExecutions, setChartsData])
 
   useEffect(() => {
     if (!currentRun?.id) return
@@ -161,20 +152,15 @@ export default function DashboardPage() {
     )
   }
 
-  // CRITICAL FIX: Use normalizeStatus for all status checks
   const currentStatus = status?.status || currentRun.status || 'loading'
   const isCompleted = isStatusCompleted(currentStatus)
   const isFailed = isStatusFailed(currentStatus)
   const isRunning = isStatusRunning(currentStatus) && !isCompleted && !isFailed
 
-  // CRITICAL FIX: Get executions from status or store, with fallback
   const executions = status?.executions || agentExecutions || []
-
-  // CRITICAL FIX: Use normalizeStatus when filtering completed agents
   const completedAgents = executions.filter((e: any) => isStatusCompleted(e.status)).length
   const totalAgents = Math.max(executions.length, 5)
 
-  // Calculate agent scores with safe defaults
   const agentScores = executions
     .filter((e: any) => e.quality_score !== null && e.quality_score !== undefined)
     .map((e: any) => ({
@@ -184,7 +170,6 @@ export default function DashboardPage() {
       status: normalizeStatus(e.status),
     }))
 
-  // CRITICAL FIX: Calculate overall quality with robust function
   const overallQuality = calculateOverallQuality(status?.quality_score_avg ?? currentRun.quality_score_avg)
 
   return (
@@ -337,7 +322,6 @@ export default function DashboardPage() {
                     </Badge>
                   </div>
 
-                  {/* CRITICAL FIX: Safely render output_data summary */}
                   {execution.output_data && typeof execution.output_data === 'object' && (
                     <div className="mt-2 text-sm text-muted-foreground bg-muted p-2 rounded overflow-x-auto">
                       <div className="grid grid-cols-2 gap-2 text-xs">
