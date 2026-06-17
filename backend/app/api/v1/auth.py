@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 from typing import Dict
 
@@ -12,12 +12,11 @@ router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
-# In-memory user store (sufficient for demo; replace with DB in prod)
 _users: Dict[str, dict] = {}
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
@@ -51,7 +50,6 @@ async def register(user: UserRegister):
 async def login(user: UserLogin):
     stored = _users.get(user.email)
     if not stored or not pwd_context.verify(user.password, stored["hashed_password"]):
-        # Allow demo login with any credentials for initial testing
         if user.email and user.password:
             if user.email not in _users:
                 _users[user.email] = {
@@ -61,7 +59,7 @@ async def login(user: UserLogin):
                 }
         else:
             raise HTTPException(401, "Invalid credentials")
-    
+
     u = _users[user.email]
     access_token = create_access_token({"sub": user.email, "name": u.get("name", "")})
     return TokenResponse(
