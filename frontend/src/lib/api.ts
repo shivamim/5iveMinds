@@ -84,4 +84,6 @@ export const reportApi = {
 export const chartApi = {
   getData: (datasetId: string, chartType: string) =>
     api.get(`/charts/${datasetId}/${chartType}`),
+  getAllCharts: (runId: string) =>
+    api.get(`/charts/${runId}`),
 }
