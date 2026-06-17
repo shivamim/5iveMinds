@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from datetime import datetime
 import uuid
 import time
+import json
 
 from app.models import (
     PipelineRun,
@@ -17,7 +18,7 @@ from app.models import (
     Chart,
     Report,
 )
-from app.schemas import PipelineRunCreate, PipelineStatusResponse
+from app.schemas import PipelineRunCreate
 from app.core.orchestrator import Orchestrator
 from app.core.message_board import MessageBoard
 from app.core.agents.data_engineer import DataEngineerAgent
@@ -216,11 +217,11 @@ class PipelineService:
                 result_data = await agent.execute()
                 all_results[agent_name] = result_data
 
-                # FIXED: Persist charts from designer to charts table
+                # Persist charts from designer to charts table
                 if agent_name == "designer":
                     await self._persist_charts(run_id, result_data)
 
-                # FIXED: Persist report from designer to reports table
+                # Persist report from designer to reports table
                 if agent_name == "designer":
                     await self._persist_report(run_id, result_data, board)
 
@@ -299,7 +300,7 @@ class PipelineService:
         )
 
     async def _persist_charts(self, run_id: uuid.UUID, designer_result: dict):
-        """CRITICAL FIX: Save designer chart specs to the charts table."""
+        """Save designer chart specs to the charts table."""
         chart_specs = designer_result.get("chart_specs", [])
         if not chart_specs:
             logger.warning(f"No chart specs to persist for run {run_id}")
@@ -307,7 +308,6 @@ class PipelineService:
 
         try:
             for spec in chart_specs:
-                # Ensure spec is JSON-serializable by converting any non-serializable types
                 clean_spec = self._make_json_serializable(spec)
                 clean_data = self._make_json_serializable(spec.get("data", {}))
 
@@ -316,7 +316,7 @@ class PipelineService:
                     agent_name="designer",
                     chart_type=spec.get("type", "unknown"),
                     chart_data=clean_data,
-                    plotly_spec=clean_spec,  # Store full spec for frontend
+                    plotly_spec=clean_spec,
                 )
                 self.db.add(chart)
 
@@ -324,7 +324,6 @@ class PipelineService:
             logger.info(f"Persisted {len(chart_specs)} charts for run {run_id}")
         except Exception as e:
             logger.error(f"Failed to persist charts for run {run_id}: {e}", exc_info=True)
-            # Don't re-raise - chart persistence should not fail the pipeline
             try:
                 await self.db.rollback()
             except Exception:
@@ -340,7 +339,6 @@ class PipelineService:
             return [self._make_json_serializable(item) for item in obj]
         if isinstance(obj, dict):
             return {str(k): self._make_json_serializable(v) for k, v in obj.items()}
-        # Handle numpy types
         try:
             import numpy as np
             if isinstance(obj, (np.integer, np.int64, np.int32)):
@@ -353,23 +351,20 @@ class PipelineService:
                 return bool(obj)
         except ImportError:
             pass
-        # Fallback: convert to string
         try:
             return str(obj)
         except Exception:
             return None
 
     async def _persist_report(self, run_id: uuid.UUID, designer_result: dict, board: MessageBoard):
-        """CRITICAL FIX: Save executive report to reports table."""
+        """Save executive report to reports table."""
         try:
-            # Build report content from all board data
             strategy = board.get("strategy", {})
             stats = board.get("statistics", {})
             ml = board.get("ml_results", {})
             data_quality = board.get("data_quality", {})
             dataset = board.get("dataset", {})
 
-            # Build markdown report content
             lines = [
                 f"# FiveMinds Executive Report",
                 f"**Dataset:** {dataset.get('filename', 'Unknown')}",
@@ -416,7 +411,6 @@ class PipelineService:
             logger.info(f"Persisted executive report for run {run_id}")
         except Exception as e:
             logger.error(f"Failed to persist report for run {run_id}: {e}", exc_info=True)
-            # Don't fail the pipeline for report persistence issues
             try:
                 await self.db.rollback()
             except Exception:
@@ -476,28 +470,13 @@ class PipelineService:
 
         return round(base_score, 1)
 
-    def _normalize_output_data(self, output_data: Any) -> Optional[Dict[str, Any]]:
-        """CRITICAL FIX: Ensure output_data is always a dict, never a JSON string.
+    # ========================================================================
+    # CRITICAL FIX: get_status and get_results now return PLAIN DICTS.
+    # This bypasses Pydantic v2 serialization which was converting JSON
+    # objects back into strings in some asyncpg + PostgreSQL configurations.
+    # ========================================================================
 
-        Some PostgreSQL drivers return JSON columns as strings instead of parsed objects.
-        This method handles both cases.
-        """
-        if output_data is None:
-            return None
-        if isinstance(output_data, dict):
-            return output_data
-        if isinstance(output_data, str):
-            import json
-            try:
-                parsed = json.loads(output_data)
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                logger.warning("output_data is a string but not valid JSON")
-                return None
-        return None
-
-    async def get_status(self, run_id: uuid.UUID) -> PipelineStatusResponse:
+    async def get_status(self, run_id: uuid.UUID):
         result = await self.db.execute(
             select(PipelineRun).where(PipelineRun.id == run_id)
         )
@@ -510,34 +489,52 @@ class PipelineService:
         )
         executions = exec_result.scalars().all()
 
-        # CRITICAL FIX: Build fresh response dicts instead of mutating SQLAlchemy objects.
-        # Some PostgreSQL drivers return JSON columns as strings. Pydantic v2's
-        # from_attributes doesn't reliably pick up in-place mutations, so we build
-        # clean dicts with normalized output_data.
         completed = sum(1 for e in executions if e.status == AgentStatus.COMPLETED)
         total = max(len(executions), 5)
         progress = (completed / total) * 100
 
         execution_responses = []
         for e in executions:
+            od = e.output_data
+            # CRITICAL: asyncpg sometimes returns JSON as a string
+            if isinstance(od, str):
+                try:
+                    od = json.loads(od)
+                except Exception:
+                    od = None
+
             execution_responses.append({
-                "id": e.id,
+                "id": str(e.id),
                 "agent_name": e.agent_name,
                 "status": e.status.value if e.status else "pending",
                 "quality_score": e.quality_score,
                 "execution_time_ms": e.execution_time_ms,
-                "output_data": self._normalize_output_data(e.output_data),
+                "output_data": od,
                 "error_message": e.error_message,
-                "started_at": e.started_at,
-                "completed_at": e.completed_at,
+                "started_at": e.started_at.isoformat() if e.started_at else None,
+                "completed_at": e.completed_at.isoformat() if e.completed_at else None,
             })
 
-        return PipelineStatusResponse(
-            run=run, executions=execution_responses, progress_percent=progress
-        )
+        run_dict = {
+            "id": str(run.id),
+            "status": run.status.value if run.status else "queued",
+            "dataset_id": str(run.dataset_id) if run.dataset_id else None,
+            "dataset_name": run.dataset_name,
+            "business_question": run.business_question,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "total_time_ms": run.total_time_ms,
+            "quality_score_avg": run.quality_score_avg,
+            "run_metadata": run.run_metadata or {},
+        }
+
+        return {
+            "run": run_dict,
+            "executions": execution_responses,
+            "progress_percent": progress,
+        }
 
     async def get_results(self, run_id: uuid.UUID):
-        """CRITICAL FIX: Return charts and reports from database."""
         result = await self.db.execute(
             select(PipelineRun).where(PipelineRun.id == run_id)
         )
@@ -550,8 +547,16 @@ class PipelineService:
         )
         executions = exec_result.scalars().all()
 
-        # CRITICAL FIX: Isolate chart/report query errors so they don't break
-        # the entire endpoint. The frontend needs execution data at minimum.
+        normalized_executions = {}
+        for e in executions:
+            od = e.output_data
+            if isinstance(od, str):
+                try:
+                    od = json.loads(od)
+                except Exception:
+                    od = None
+            normalized_executions[e.agent_name] = od
+
         try:
             chart_service = ChartService(self.db)
             charts_data = await chart_service.get_charts(run_id)
@@ -577,15 +582,10 @@ class PipelineService:
             logger.warning(f"Report query failed for run {run_id}: {e}")
             reports_data = []
 
-        # CRITICAL FIX: Normalize output_data for all executions
-        normalized_executions = {}
-        for e in executions:
-            normalized_executions[e.agent_name] = self._normalize_output_data(e.output_data)
-
         return {
             "run": {
                 "id": str(run.id),
-                "status": run.status.value,
+                "status": run.status.value if run.status else "queued",
                 "dataset_id": str(run.dataset_id) if run.dataset_id else None,
                 "dataset_name": run.dataset_name,
                 "business_question": run.business_question,
