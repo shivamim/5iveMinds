@@ -1,5 +1,3 @@
-
-
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
@@ -9,13 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { Activity, FlaskConical, FileUp } from 'lucide-react'
 
-// Color palette for charts
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
 
-/**
- * CRITICAL FIX: Parse output_data that may arrive as a JSON string
- * from the backend instead of a parsed object.
- */
 function parseOutputData(data: any): Record<string, any> | null {
   if (data === null || data === undefined) return null
   if (typeof data === 'string') {
@@ -29,18 +22,12 @@ function parseOutputData(data: any): Record<string, any> | null {
   return null
 }
 
-/**
- * CRITICAL FIX: Convert histogram bin data to recharts-compatible format
- * The statistician agent provides: histogram: { bin_edges: [...], frequencies: [...] }
- * We need to convert this to: [{ bin: 'label', frequency: value }, ...]
- */
 function buildHistogramData(dist: any): Array<{ bin: string; frequency: number; midpoint: number }> {
   const histogram = dist.histogram || {}
   const binEdges = histogram.bin_edges || []
   const frequencies = histogram.frequencies || []
 
   if (binEdges.length > 1 && frequencies.length > 0) {
-    // Use actual histogram bin data
     return frequencies.map((freq: number, i: number) => ({
       bin: binEdges[i] !== undefined ? String(binEdges[i]) : `Bin ${i}`,
       frequency: Number(freq) || 0,
@@ -48,7 +35,6 @@ function buildHistogramData(dist: any): Array<{ bin: string; frequency: number; 
     }))
   }
 
-  // Fallback: generate bins from mean/std/min/max
   const mean = Number(dist.mean) || 0
   const std = Number(dist.std) || 1
   const min = Number(dist.min) || (mean - 3 * std)
@@ -67,54 +53,39 @@ function buildHistogramData(dist: any): Array<{ bin: string; frequency: number; 
 }
 
 export default function StatisticsPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
+  const { getAgentOutput, currentRun } = useStore()
   const [fetching, setFetching] = useState(false)
-  const [output, setOutput] = useState<Record<string, any> | null>(null)
+  const [output, setOutput] = useState<<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
 
     const loadData = async () => {
-      // First check store
       const existing = getAgentOutput('statistician')
       if (existing && Object.keys(existing).length > 0) {
         setOutput(existing)
         return
       }
 
-      // CRITICAL FIX: Fetch from /results endpoint which has normalized output_data
       setFetching(true)
       try {
         const res = await pipelineApi.getResults(currentRun.id)
         const executions = res.data?.executions || {}
-        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
-          agent_name,
-          output_data: parseOutputData(output_data) || output_data,
-          status: 'completed',
-        }))
-
-        if (executionArray.length > 0) {
-          setAgentExecutions(executionArray)
-          const statOutput = parseOutputData(executions?.statistician)
-          if (statOutput) {
-            setOutput(statOutput)
-          }
+        const statOutput = parseOutputData(executions?.statistician)
+        if (statOutput) {
+          setOutput(statOutput)
         }
       } catch (err) {
         console.error('Failed to fetch statistician data from /results:', err)
-        // Fallback to /status endpoint
         try {
           const res = await pipelineApi.getStatus(currentRun.id)
           const executions = res.data?.executions ?? []
-          if (executions.length > 0) {
-            setAgentExecutions(executions)
-            const statExec = executions.find(
-              (e: any) => e.agent_name === 'statistician' && e.output_data
-            )
-            const parsed = parseOutputData(statExec?.output_data)
-            if (parsed) {
-              setOutput(parsed)
-            }
+          const statExec = executions.find(
+            (e: any) => e.agent_name === 'statistician' && e.output_data
+          )
+          const parsed = parseOutputData(statExec?.output_data)
+          if (parsed) {
+            setOutput(parsed)
           }
         } catch (err2) {
           console.error('Failed to fetch from /status fallback:', err2)
@@ -125,16 +96,14 @@ export default function StatisticsPage() {
     }
 
     loadData()
-    // CRITICAL FIX: Re-run when agentExecutions changes in the store
-  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Only depend on currentRun.id
+  }, [currentRun?.id])
 
-  // Get output from store or local state
   const statisticianOutput = useMemo(() => {
     if (output) return output
     return getAgentOutput('statistician') || {}
-  }, [output, agentExecutions, getAgentOutput])
+  }, [output, getAgentOutput])
 
-  // Extract data with fallbacks
   const distributions = statisticianOutput.distributions || []
   const correlations = statisticianOutput.correlations || []
   const hypothesisTests = statisticianOutput.hypothesis_tests || []
@@ -145,7 +114,6 @@ export default function StatisticsPage() {
     ?? 0
   const significantCorrelations = statisticianOutput.significant_correlations ?? 0
 
-  // CRITICAL FIX: More lenient hasData check
   const hasData = distributions.length > 0
     || correlations.length > 0
     || hypothesisTests.length > 0
@@ -217,7 +185,6 @@ export default function StatisticsPage() {
                     <Card key={idx}>
                       <CardContent className="p-4">
                         <h4 className="font-semibold mb-2">{dist.column || `Column ${idx + 1}`}</h4>
-                        {/* Distribution Stats */}
                         <div className="space-y-1 text-sm mb-4">
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Type:</span>
@@ -245,7 +212,6 @@ export default function StatisticsPage() {
                           )}
                         </div>
 
-                        {/* CRITICAL FIX: Render ACTUAL HISTOGRAM with bin data */}
                         <div className="h-48 w-full">
                           <ResponsiveContainer width="100%" height="100%">
                             <BarChart
@@ -297,7 +263,7 @@ export default function StatisticsPage() {
                     <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{corr.var1}</span>
-                        <span className="text-muted-foreground">&#8596;</span>
+                        <span className="text-muted-foreground">↔</span>
                         <span className="font-medium">{corr.var2}</span>
                       </div>
                       <div className="flex items-center gap-3">
@@ -339,7 +305,6 @@ export default function StatisticsPage() {
               ) : (
                 <div className="space-y-4">
                   {hypothesisTests.map((test: any, idx: number) => {
-                    // CRITICAL FIX: Ensure test name is always displayed
                     const testName = test.name
                       || test.test_name
                       || (test.column ? `${test.test_type || 'Test'}: ${test.column}` : `Test ${idx + 1}`)
