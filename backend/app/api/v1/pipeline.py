@@ -6,7 +6,7 @@ import uuid
 
 from app.database import get_async_db, async_engine
 from app.models import PipelineRun, AgentExecution, PipelineStatus, AgentStatus
-from app.schemas import PipelineRunCreate, PipelineRunResponse, PipelineStatusResponse
+from app.schemas import PipelineRunCreate, PipelineRunResponse
 from app.services.pipeline_service import PipelineService
 from app.services.websocket_manager import WebSocketManager
 
@@ -24,14 +24,14 @@ async def start_pipeline(
     service = PipelineService(db)
     run = await service.create_run(request)
 
-    # Create fresh session for background task — request-scoped session dies when HTTP ends
     session_maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
     background_tasks.add_task(service.execute_pipeline_with_session, run.id, ws_manager, session_maker)
 
     return run
 
 
-@router.get("/pipeline/{run_id}/status", response_model=PipelineStatusResponse)
+# CRITICAL FIX: Removed response_model so FastAPI doesn't re-serialize through Pydantic
+@router.get("/pipeline/{run_id}/status")
 async def get_pipeline_status(
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_async_db)
