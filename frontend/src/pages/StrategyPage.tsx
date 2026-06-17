@@ -33,22 +33,42 @@ export default function StrategyPage() {
         return
       }
 
-      // Fetch from API
+      // CRITICAL FIX: Fetch from /results endpoint for normalized output_data
       setFetching(true)
       try {
-        const res = await pipelineApi.getStatus(currentRun.id)
-        const executions = res.data?.executions ?? []
-        if (executions.length > 0) {
-          setAgentExecutions(executions)
-          const stratExec = executions.find(
-            (e: any) => e.agent_name === 'strategist' && e.output_data
-          )
-          if (stratExec?.output_data) {
-            setStrategyData(stratExec.output_data)
+        const res = await pipelineApi.getResults(currentRun.id)
+        const executions = res.data?.executions || {}
+        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
+          agent_name,
+          output_data,
+          status: 'completed',
+        }))
+
+        if (executionArray.length > 0) {
+          setAgentExecutions(executionArray)
+          const stratOutput = executions?.strategist
+          if (stratOutput && typeof stratOutput === 'object') {
+            setStrategyData(stratOutput as Record<string, any>)
           }
         }
       } catch (err) {
-        console.error('Failed to fetch strategy data:', err)
+        console.error('Failed to fetch from /results:', err)
+        // Fallback to /status
+        try {
+          const res = await pipelineApi.getStatus(currentRun.id)
+          const executions = res.data?.executions ?? []
+          if (executions.length > 0) {
+            setAgentExecutions(executions)
+            const stratExec = executions.find(
+              (e: any) => e.agent_name === 'strategist' && e.output_data
+            )
+            if (stratExec?.output_data) {
+              setStrategyData(stratExec.output_data)
+            }
+          }
+        } catch (err2) {
+          console.error('Failed to fetch from /status fallback:', err2)
+        }
       } finally {
         setFetching(false)
       }
