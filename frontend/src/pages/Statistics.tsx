@@ -1,302 +1,109 @@
-import { useSearchParams } from 'react-router-dom';
-import { BarChart3, AlertCircle } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { usePipeline, getAgentOutput, getChart } from '@/hooks/usePipeline';
-import type { StatisticianOutput, CorrelationItem } from '@/types';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from 'recharts';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { getPipelineResults } from "../services/api";
+import { BarChart3, Activity } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-export function Statistics() {
-  const [searchParams] = useSearchParams();
-  const runId = searchParams.get('run') || localStorage.getItem('lastRunId');
+export default function Statistics() {
+  const { run_id } = useParams<{ run_id: string }>();
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const { results } = usePipeline({
-    runId,
-    pollInterval: 5000,
-    autoFetch: !!runId,
-  });
+  useEffect(() => {
+    if (!run_id) return;
+    getPipelineResults(run_id)
+      .then((res) => { setData(res); setLoading(false); })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  }, [run_id]);
 
-  const statsOutput = getAgentOutput(results, 'statistician') as StatisticianOutput | null;
-  const correlations = statsOutput?.correlations || [];
-  const hypothesisTests = (statsOutput?.hypothesis_tests as Array<Record<string, unknown>>) || [];
+  if (loading) return <div className="p-8 text-slate-400">Loading...</div>;
+  if (error) return <div className="p-8 text-red-400">Error: {error}</div>;
+  if (!data) return null;
 
-  // Get histogram chart data
-  const histogramChart = getChart(results, 'histogram');
-  const histogramData = histogramChart?.chart_data;
+  const stats = data.executions?.statistician || {};
+  const correlations: any[] = stats.correlations || [];
+  const insights: any[] = stats.insights || [];
+  const tests: any[] = stats.hypothesis_tests || [];
 
-  // Get correlation heatmap data
-  const correlationChart = getChart(results, 'correlation_heatmap');
-  const correlationMatrix = correlationChart?.chart_data?.matrix as Record<string, Record<string, number>> | undefined;
+  const corrChart = correlations.slice(0, 10).map((c: any, i: number) => ({
+    name: c.column1 && c.column2 ? `${c.column1}-${c.column2}` : `Pair-${i}`,
+    value: typeof c.correlation === "number" ? Math.abs(c.correlation) : 0,
+    raw: typeof c.correlation === "number" ? c.correlation : 0,
+  }));
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Statistical Analysis</h1>
-        <p className="text-gray-500 mt-1">EDA, distributions, hypothesis testing, and correlation analysis</p>
-      </div>
+    <div className="p-8 max-w-6xl mx-auto">
+      <h1 className="text-2xl font-bold flex items-center gap-2 mb-6"><BarChart3 className="w-6 h-6 text-emerald-400" /> Statistics</h1>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Distribution Chart */}
-        <Card className="min-h-[400px]">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Distribution</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!histogramData ? (
-              <EmptyChart message="No distribution data available. Run a pipeline to generate histograms." />
-            ) : (
-              <DistributionChart data={histogramData} />
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Correlation Matrix */}
-        <Card className="min-h-[400px]">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Correlation Matrix</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!correlationMatrix && correlations.length === 0 ? (
-              <EmptyChart message="No correlation data available." />
-            ) : correlationMatrix ? (
-              <CorrelationHeatmap matrix={correlationMatrix} />
-            ) : (
-              <CorrelationList correlations={correlations} />
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Hypothesis Test Results */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Hypothesis Test Results</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {hypothesisTests.length === 0 && correlations.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No hypothesis test results available.
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h3 className="font-semibold mb-3">Top Correlations (Absolute)</h3>
+          {corrChart.length === 0 ? <p className="text-slate-500 text-sm">No correlation data.</p> : (
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={corrChart}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                  <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} angle={-20} textAnchor="end" height={60} />
+                  <YAxis tick={{ fill: "#94a3b8" }} domain={[0, 1]} />
+                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155" }} />
+                  <Bar dataKey="value">
+                    {corrChart.map((_, i) => <Cell key={i} fill={corrChart[i].raw > 0 ? "#10b981" : "#ef4444"} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-          ) : (
-            <div className="space-y-2">
-              {/* Show correlation p-values as hypothesis tests */}
-              {correlations.map((c, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm text-gray-700">
-                      {c.var1} vs {c.var2}
-                    </span>
-                  </div>
-                  <span
-                    className={`text-sm font-medium ${
-                      c.p_value < 0.05 ? 'text-green-600' : 'text-amber-600'
-                    }`}
-                  >
-                    p = {c.p_value?.toFixed(3)} ({c.p_value < 0.05 ? 'significant' : 'not significant'})
-                  </span>
-                </div>
+          )}
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h3 className="font-semibold mb-3">Correlation Matrix</h3>
+          {correlations.length === 0 ? <p className="text-slate-500 text-sm">No data.</p> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="text-slate-500 border-b border-slate-800"><th className="text-left py-2">Col A</th><th className="text-left py-2">Col B</th><th className="text-left py-2">r</th></tr></thead>
+                <tbody>
+                  {correlations.map((c: any, i: number) => (
+                    <tr key={i} className="border-b border-slate-800/50">
+                      <td className="py-2 text-slate-300">{c.column1 || "?"}</td>
+                      <td className="py-2 text-slate-300">{c.column2 || "?"}</td>
+                      <td className="py-2 font-mono">{typeof c.correlation === "number" ? c.correlation.toFixed(3) : "?"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h3 className="font-semibold mb-3 flex items-center gap-2"><Activity className="w-4 h-4" /> Insights</h3>
+          {insights.length === 0 ? <p className="text-slate-500 text-sm">No insights generated.</p> : (
+            <ul className="space-y-2">
+              {insights.map((ins: any, i: number) => (
+                <li key={i} className="text-sm text-slate-300 border-l-2 border-emerald-500 pl-3">
+                  {typeof ins === "string" ? ins : ins.description || JSON.stringify(ins)}
+                </li>
               ))}
-              {/* Show actual hypothesis tests */}
-              {hypothesisTests.map((test, i) => (
-                <div
-                  key={`test-${i}`}
-                  className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm text-gray-700">
-                      {(test.name as string) || (test.test as string) || 'Test'}
-                    </span>
-                  </div>
-                  <span
-                    className={`text-sm font-medium ${
-                      (test.p_value as number) < 0.05 ? 'text-green-600' : 'text-amber-600'
-                    }`}
-                  >
-                    p = {typeof test.p_value === 'number' ? test.p_value.toFixed(3) : 'N/A'} ({(test.p_value as number) < 0.05 ? 'significant' : 'not significant'})
-                  </span>
+            </ul>
+          )}
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h3 className="font-semibold mb-3">Hypothesis Tests</h3>
+          {tests.length === 0 ? <p className="text-slate-500 text-sm">No tests recorded.</p> : (
+            <div className="space-y-2">
+              {tests.map((t: any, i: number) => (
+                <div key={i} className="text-sm border-b border-slate-800/50 py-2">
+                  <p className="text-slate-300 font-medium">{t.test_name || t.name || `Test ${i + 1}`}</p>
+                  <p className="text-slate-500">p-value: {t.p_value != null ? t.p_value.toFixed(4) : "N/A"}</p>
                 </div>
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ===== Distribution Chart Component =====
-function DistributionChart({ data }: { data: Record<string, unknown> }) {
-  const [chartData, setChartData] = useState<Array<{ name: string; value: number }>>([]);
-
-  useEffect(() => {
-    // Parse different histogram data formats
-    if (data.bins && data.counts) {
-      const bins = data.bins as number[];
-      const counts = data.counts as number[];
-      setChartData(
-        bins.slice(0, -1).map((bin, i) => ({
-          name: bin.toFixed(1),
-          value: counts[i] || 0,
-        }))
-      );
-    } else if (data.values) {
-      const values = data.values as number[];
-      // Create frequency map
-      const freq: Record<string, number> = {};
-      values.forEach((v) => {
-        const key = typeof v === 'number' ? v.toFixed(1) : String(v);
-        freq[key] = (freq[key] || 0) + 1;
-      });
-      setChartData(Object.entries(freq).map(([name, value]) => ({ name, value })));
-    } else if (data.distribution) {
-      const dist = data.distribution as Record<string, number>;
-      setChartData(Object.entries(dist).map(([name, value]) => ({ name, value })));
-    } else if (data.frequencies) {
-      const freq = data.frequencies as Record<string, number>;
-      setChartData(Object.entries(freq).map(([name, value]) => ({ name, value })));
-    } else {
-      // Fallback: try to use any numeric array fields
-      const entries = Object.entries(data).filter(([_, v]) => Array.isArray(v));
-      if (entries.length >= 2) {
-        const labels = entries[0][1] as string[];
-        const values = entries[1][1] as number[];
-        setChartData(labels.map((name, i) => ({ name: String(name), value: values[i] || 0 })));
-      }
-    }
-  }, [data]);
-
-  if (chartData.length === 0) {
-    return <EmptyChart message="Unable to parse distribution data." />;
-  }
-
-  return (
-    <ResponsiveContainer width="100%" height={300}>
-      <BarChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-        <YAxis tick={{ fontSize: 12 }} />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: '#fff',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            fontSize: '12px',
-          }}
-        />
-        <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]}>
-          {chartData.map((_, index) => (
-            <Cell key={`cell-${index}`} fill={`hsl(${210 + index * 5}, 80%, ${60 + (index % 3) * 5}%)`} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-// ===== Correlation Heatmap Component =====
-function CorrelationHeatmap({ matrix }: { matrix: Record<string, Record<string, number>> }) {
-  const variables = Object.keys(matrix);
-
-  if (variables.length === 0) {
-    return <EmptyChart message="Empty correlation matrix." />;
-  }
-
-  const getColor = (value: number) => {
-    const intensity = Math.abs(value);
-    if (value > 0) {
-      return `rgba(34, 197, 94, ${0.1 + intensity * 0.9})`;
-    }
-    return `rgba(239, 68, 68, ${0.1 + intensity * 0.9})`;
-  };
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr>
-            <th className="p-2"></th>
-            {variables.map((v) => (
-              <th key={v} className="p-2 text-xs font-medium text-gray-600 text-center rotate-45">
-                {v}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {variables.map((row) => (
-            <tr key={row}>
-              <td className="p-2 text-xs font-medium text-gray-600">{row}</td>
-              {variables.map((col) => {
-                const value = matrix[row]?.[col] ?? 0;
-                return (
-                  <td
-                    key={col}
-                    className="p-2 text-center text-xs font-medium"
-                    style={{ backgroundColor: getColor(value) }}
-                  >
-                    {value.toFixed(2)}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ===== Correlation List Component (fallback) =====
-function CorrelationList({ correlations }: { correlations: CorrelationItem[] }) {
-  if (correlations.length === 0) {
-    return <EmptyChart message="No correlations found." />;
-  }
-
-  return (
-    <div className="space-y-2">
-      {correlations.map((c, i) => (
-        <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
-          <span className="text-sm text-gray-700">
-            {c.var1} ↔ {c.var2}
-          </span>
-          <span
-            className={`text-sm font-medium ${
-              Math.abs(c.correlation) > 0.7
-                ? 'text-green-600'
-                : Math.abs(c.correlation) > 0.3
-                ? 'text-amber-600'
-                : 'text-gray-500'
-            }`}
-          >
-            {c.correlation?.toFixed(3)}
-          </span>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function EmptyChart({ message }: { message: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-[300px] text-center">
-      <BarChart3 className="w-12 h-12 text-gray-300 mb-3" />
-      <p className="text-gray-500 text-sm max-w-xs">{message}</p>
+      </div>
     </div>
   );
 }
