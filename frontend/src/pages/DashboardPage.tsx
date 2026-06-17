@@ -61,7 +61,7 @@ function calculateOverallQuality(qualityScoreAvg: unknown): number | null {
 }
 
 export default function DashboardPage() {
-  const { currentRun, setCurrentRun, setAgentExecutions, agentExecutions } = useStore()
+  const { currentRun, setCurrentRun, setAgentExecutions, agentExecutions, setChartsData } = useStore()
 
   const [status, setStatus] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -71,7 +71,13 @@ export default function DashboardPage() {
   const fetchStatus = useCallback(async () => {
     if (!currentRun?.id) return
     try {
-      const res = await pipelineApi.getStatus(currentRun.id)
+      // CRITICAL FIX: Fetch both /status and /results endpoints
+      const [statusRes, resultsRes] = await Promise.all([
+        pipelineApi.getStatus(currentRun.id),
+        pipelineApi.getResults(currentRun.id).catch(() => null), // Don't fail if /results errors
+      ])
+
+      const res = statusRes
 
       // CRITICAL FIX: Handle both old response format (run/executions) and new format
       const responseData = res.data || {}
@@ -100,6 +106,11 @@ export default function DashboardPage() {
       // CRITICAL FIX: Only update executions if we got valid data
       if (executions.length > 0) {
         setAgentExecutions(executions)
+      }
+
+      // CRITICAL FIX: Store charts data from /results endpoint
+      if (resultsRes?.data?.charts && Array.isArray(resultsRes.data.charts)) {
+        setChartsData(resultsRes.data.charts)
       }
 
       // Update currentRun status
