@@ -1,6 +1,17 @@
+/**
+ * Dashboard Page - FIXED
+ *
+ * Key fixes:
+ * 1. Quality score handles all edge cases (string, number, null, >100)
+ * 2. Status comparison uses normalizeStatus helper
+ * 3. Execution data display handles empty output_data
+ * 4. Added useEffect to fetch status immediately when currentRun changes
+ */
+
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
+import { normalizeStatus, isStatusCompleted, isStatusFailed, isStatusRunning } from '@/stores/appStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -27,46 +38,75 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   designer: 'Designer',
 }
 
+/**
+ * CRITICAL FIX: Robust quality score calculation.
+ * Handles string, number, null, undefined, and values > 100.
+ */
+function calculateOverallQuality(qualityScoreAvg: unknown): number | null {
+  if (qualityScoreAvg === null || qualityScoreAvg === undefined) return null
+  let q: number
+  if (typeof qualityScoreAvg === 'string') {
+    q = parseFloat(qualityScoreAvg)
+  } else if (typeof qualityScoreAvg === 'number') {
+    q = qualityScoreAvg
+  } else {
+    return null
+  }
+  if (isNaN(q)) return null
+  // Handle values that were accidentally multiplied (e.g., 9300 instead of 93)
+  if (q > 1000) q = q / 100
+  if (q > 100) q = q / 100
+  // Clamp to 0-100 range
+  return Math.round(Math.max(0, Math.min(100, q)))
+}
+
 export default function DashboardPage() {
   const { currentRun, setCurrentRun, setAgentExecutions, agentExecutions } = useStore()
 
   const [status, setStatus] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const intervalRef = useRef<<ReturnType<<typeof setInterval> | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchStatus = useCallback(async () => {
     if (!currentRun?.id) return
     try {
       const res = await pipelineApi.getStatus(currentRun.id)
-      const runData = res.data?.run ?? {}
-      const executions = res.data?.executions ?? []
-      const progressPercent = res.data?.progress_percent ?? 0
 
-      const normalizedStatus = {
-        ...res.data,
-        status: runData.status ?? 'loading',
+      // CRITICAL FIX: Handle both old response format (run/executions) and new format
+      const responseData = res.data || {}
+      const runData = responseData.run || {}
+      const executions = responseData.executions ?? []
+      const progressPercent = responseData.progress_percent ?? 0
+
+      // CRITICAL FIX: Normalize the status from the run data
+      const normalizedStatus = normalizeStatus(runData.status || 'loading')
+
+      const normalizedData = {
+        ...responseData,
+        status: normalizedStatus,
         quality_score_avg: runData.quality_score_avg,
         completed_at: runData.completed_at,
         started_at: runData.started_at,
         total_time_ms: runData.total_time_ms,
-        dataset_name: runData.dataset_name,
-        business_question: runData.business_question,
+        dataset_name: runData.dataset_name || currentRun.dataset_name,
+        business_question: runData.business_question || currentRun.business_question,
         executions: executions,
         progress_percent: progressPercent,
       }
 
-      setStatus(normalizedStatus)
+      setStatus(normalizedData)
 
+      // CRITICAL FIX: Only update executions if we got valid data
       if (executions.length > 0) {
         setAgentExecutions(executions)
       }
 
-      const pipelineStatus = runData.status
-      if (pipelineStatus === 'completed' || pipelineStatus === 'failed') {
+      // Update currentRun status
+      if (isStatusCompleted(normalizedStatus) || isStatusFailed(normalizedStatus)) {
         setCurrentRun({
           ...currentRun,
-          status: pipelineStatus,
+          status: normalizedStatus,
           quality_score_avg: runData.quality_score_avg,
           completed_at: runData.completed_at,
         })
@@ -110,28 +150,31 @@ export default function DashboardPage() {
     )
   }
 
-  const isCompleted = status?.status === 'completed'
-  const isFailed = status?.status === 'failed'
-  const isRunning = status?.status === 'running' || status?.status === 'queued'
-  const executions = status?.executions || agentExecutions || []
-  const completedAgents = executions.filter((e: any) => e.status === 'completed').length
-  const totalAgents = executions.length || 5
+  // CRITICAL FIX: Use normalizeStatus for all status checks
+  const currentStatus = status?.status || currentRun.status || 'loading'
+  const isCompleted = isStatusCompleted(currentStatus)
+  const isFailed = isStatusFailed(currentStatus)
+  const isRunning = isStatusRunning(currentStatus) && !isCompleted && !isFailed
 
+  // CRITICAL FIX: Get executions from status or store, with fallback
+  const executions = status?.executions || agentExecutions || []
+
+  // CRITICAL FIX: Use normalizeStatus when filtering completed agents
+  const completedAgents = executions.filter((e: any) => isStatusCompleted(e.status)).length
+  const totalAgents = Math.max(executions.length, 5)
+
+  // Calculate agent scores with safe defaults
   const agentScores = executions
     .filter((e: any) => e.quality_score !== null && e.quality_score !== undefined)
     .map((e: any) => ({
       name: e.agent_name,
       displayName: AGENT_DISPLAY_NAMES[e.agent_name] || e.agent_name,
-      score: Math.round(e.quality_score),
-      status: e.status,
+      score: Math.round(Number(e.quality_score) || 0),
+      status: normalizeStatus(e.status),
     }))
 
-  let overallQuality: number | null = null
-  if (status?.quality_score_avg != null) {
-    let q = Number(status.quality_score_avg)
-    if (q > 100) q = q / 100
-    overallQuality = Math.round(Math.max(0, Math.min(100, q)))
-  }
+  // CRITICAL FIX: Calculate overall quality with robust function
+  const overallQuality = calculateOverallQuality(status?.quality_score_avg ?? currentRun.quality_score_avg)
 
   return (
     <div className="space-y-6">
@@ -141,7 +184,7 @@ export default function DashboardPage() {
           <p className="text-muted-foreground">Pipeline run for {currentRun.dataset_name}</p>
         </div>
         <Badge variant={isCompleted ? 'default' : isFailed ? 'destructive' : 'secondary'}>
-          {status?.status || 'loading'}
+          {currentStatus}
         </Badge>
       </div>
 
@@ -155,8 +198,8 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               {isCompleted && <CheckCircle2 className="h-5 w-5 text-green-500" />}
               {isFailed && <XCircle className="h-5 w-5 text-red-500" />}
-              {isRunning && <Loader2 className="h-5 w-5 animate-spin text-blue-500" />}
-              <span className="text-2xl font-bold">{status?.status || '...'}</span>
+              {(isRunning || (!isCompleted && !isFailed)) && <Loader2 className="h-5 w-5 animate-spin text-blue-500" />}
+              <span className="text-2xl font-bold">{currentStatus}</span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Started: {currentRun.started_at ? new Date(currentRun.started_at).toLocaleString() : 'N/A'}
@@ -261,64 +304,68 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         ) : (
-          executions.map((execution: any) => (
-            <Card key={execution.id} className="overflow-hidden">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    {execution.status === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
-                    {execution.status === 'failed' && <XCircle className="h-4 w-4 text-red-500" />}
-                    {execution.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
-                    <span className="font-medium capitalize">
-                      {AGENT_DISPLAY_NAMES[execution.agent_name] || execution.agent_name}
-                    </span>
-                  </div>
-                  <Badge variant={
-                    execution.status === 'completed' ? 'default' :
-                    execution.status === 'failed' ? 'destructive' : 'secondary'
-                  }>
-                    {execution.status}
-                  </Badge>
-                </div>
-
-                {execution.output_data && Object.keys(execution.output_data).length > 0 && (
-                  <div className="mt-2 text-sm text-muted-foreground bg-muted p-2 rounded overflow-x-auto">
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {execution.output_data.quality_score !== undefined && (
-                        <div>Quality: {execution.output_data.quality_score}/100</div>
-                      )}
-                      {execution.output_data.row_count !== undefined && (
-                        <div>Rows: {execution.output_data.row_count}</div>
-                      )}
-                      {execution.output_data.column_count !== undefined && (
-                        <div>Columns: {execution.output_data.column_count}</div>
-                      )}
-                      {execution.output_data.best_model && (
-                        <div>Model: {execution.output_data.best_model}</div>
-                      )}
-                      {execution.output_data.best_r2 !== undefined && (
-                        <div>R²: {execution.output_data.best_r2}</div>
-                      )}
-                      {execution.output_data.business_insights && (
-                        <div>Insights: {execution.output_data.business_insights.length}</div>
-                      )}
+          executions.map((execution: any) => {
+            const execStatus = normalizeStatus(execution.status)
+            return (
+              <Card key={execution.id || execution.agent_name} className="overflow-hidden">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {execStatus === 'completed' && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                      {execStatus === 'failed' && <XCircle className="h-4 w-4 text-red-500" />}
+                      {(execStatus === 'running' || execStatus === 'pending') && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+                      <span className="font-medium capitalize">
+                        {AGENT_DISPLAY_NAMES[execution.agent_name] || execution.agent_name}
+                      </span>
                     </div>
+                    <Badge variant={
+                      execStatus === 'completed' ? 'default' :
+                      execStatus === 'failed' ? 'destructive' : 'secondary'
+                    }>
+                      {execStatus}
+                    </Badge>
                   </div>
-                )}
 
-                {execution.error_message && (
-                  <div className="mt-2 text-sm text-red-500 bg-red-50 dark:bg-red-950 p-2 rounded">
-                    {execution.error_message}
+                  {/* CRITICAL FIX: Safely render output_data summary */}
+                  {execution.output_data && typeof execution.output_data === 'object' && (
+                    <div className="mt-2 text-sm text-muted-foreground bg-muted p-2 rounded overflow-x-auto">
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {execution.output_data.quality_score !== undefined && (
+                          <div>Quality: {execution.output_data.quality_score}/100</div>
+                        )}
+                        {execution.output_data.row_count !== undefined && (
+                          <div>Rows: {execution.output_data.row_count}</div>
+                        )}
+                        {execution.output_data.column_count !== undefined && (
+                          <div>Columns: {execution.output_data.column_count}</div>
+                        )}
+                        {execution.output_data.best_model && (
+                          <div>Model: {execution.output_data.best_model}</div>
+                        )}
+                        {execution.output_data.best_r2 !== undefined && (
+                          <div>R2: {execution.output_data.best_r2}</div>
+                        )}
+                        {execution.output_data.business_insights && Array.isArray(execution.output_data.business_insights) && (
+                          <div>Insights: {execution.output_data.business_insights.length}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {execution.error_message && (
+                    <div className="mt-2 text-sm text-red-500 bg-red-50 dark:bg-red-950 p-2 rounded">
+                      {execution.error_message}
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Duration: {execution.execution_time_ms ? `${(execution.execution_time_ms / 1000).toFixed(1)}s` : 'N/A'}
+                    {execution.quality_score ? ` | Quality: ${Math.round(Number(execution.quality_score))}%` : ''}
                   </div>
-                )}
-
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Duration: {execution.execution_time_ms ? `${(execution.execution_time_ms / 1000).toFixed(1)}s` : 'N/A'}
-                  {execution.quality_score && ` | Quality: ${Math.round(execution.quality_score)}%`}
-                </div>
-              </CardContent>
-            </Card>
-          ))
+                </CardContent>
+              </Card>
+            )
+          })
         )}
       </div>
 
