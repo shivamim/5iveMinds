@@ -20,6 +20,10 @@ interface AppState {
   // Helper to get all outputs
   getAllAgentOutputs: () => Record<string, Record<string, unknown> | null>
 
+  // Charts - populated from /results or /charts endpoint
+  chartsData: Record<string, unknown>[]
+  setChartsData: (charts: Record<string, unknown>[]) => void
+
   // Datasets
   datasets: Dataset[]
   setDatasets: (datasets: Dataset[]) => void
@@ -107,6 +111,10 @@ export const useStore = create<AppState>((set, get) => ({
   // Agent executions from the pipeline - populated by DashboardPage
   agentExecutions: [],
   setAgentExecutions: (executions) => set({ agentExecutions: executions }),
+
+  // Charts data - populated from /results or /charts endpoint
+  chartsData: [],
+  setChartsData: (charts) => set({ chartsData: charts }),
 
   /**
    * CRITICAL FIX: getAgentOutput now normalizes status before comparing.
