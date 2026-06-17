@@ -1,5 +1,3 @@
-
-
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
@@ -9,10 +7,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Database, Wrench, AlertTriangle, FileUp } from 'lucide-react'
 
-/**
- * CRITICAL FIX: Parse output_data that may arrive as a JSON string
- * from the backend instead of a parsed object.
- */
 function parseOutputData(data: any): Record<string, any> | null {
   if (data === null || data === undefined) return null
   if (typeof data === 'string') {
@@ -27,54 +21,41 @@ function parseOutputData(data: any): Record<string, any> | null {
 }
 
 export default function DataEngineeringPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
+  const { getAgentOutput, currentRun } = useStore()
   const [fetching, setFetching] = useState(false)
-  const [output, setOutput] = useState<Record<string, any> | null>(null)
+  const [output, setOutput] = useState<<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
 
     const loadData = async () => {
-      // First check if we already have data in the store
+      // Check store first
       const existing = getAgentOutput('data_engineer')
       if (existing && Object.keys(existing).length > 0) {
         setOutput(existing)
         return
       }
 
-      // CRITICAL FIX: Fetch from /results endpoint for normalized output_data
       setFetching(true)
       try {
         const res = await pipelineApi.getResults(currentRun.id)
         const executions = res.data?.executions || {}
-        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
-          agent_name,
-          output_data: parseOutputData(output_data) || output_data,
-          status: 'completed',
-        }))
-
-        if (executionArray.length > 0) {
-          setAgentExecutions(executionArray)
-          const deOutput = parseOutputData(executions?.data_engineer)
-          if (deOutput) {
-            setOutput(deOutput)
-          }
+        const deOutput = parseOutputData(executions?.data_engineer)
+        if (deOutput) {
+          setOutput(deOutput)
         }
       } catch (err) {
-        console.error('Failed to fetch from /results:', err)
+        console.error('Failed to fetch data engineering results:', err)
         // Fallback to /status
         try {
           const res = await pipelineApi.getStatus(currentRun.id)
           const executions = res.data?.executions ?? []
-          if (executions.length > 0) {
-            setAgentExecutions(executions)
-            const dataEngineerExec = executions.find(
-              (e: any) => e.agent_name === 'data_engineer' && e.output_data
-            )
-            const parsed = parseOutputData(dataEngineerExec?.output_data)
-            if (parsed) {
-              setOutput(parsed)
-            }
+          const dataEngineerExec = executions.find(
+            (e: any) => e.agent_name === 'data_engineer' && e.output_data
+          )
+          const parsed = parseOutputData(dataEngineerExec?.output_data)
+          if (parsed) {
+            setOutput(parsed)
           }
         } catch (err2) {
           console.error('Failed to fetch from /status fallback:', err2)
@@ -85,18 +66,15 @@ export default function DataEngineeringPage() {
     }
 
     loadData()
-    // CRITICAL FIX: Re-run when agentExecutions changes in the store
-    // so data arrives even if it wasn't ready on first mount.
-  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Only depend on currentRun.id — prevents race conditions
+  }, [currentRun?.id])
 
-  // Try to get output from store if not already loaded
   const dataEngineerOutput = useMemo(() => {
     if (output) return output
     const fromStore = getAgentOutput('data_engineer')
     return fromStore || {}
-  }, [output, agentExecutions, getAgentOutput])
+  }, [output, getAgentOutput])
 
-  // CRITICAL FIX: Check multiple possible schema field names
   const schema = dataEngineerOutput.schema
     || dataEngineerOutput.inferred_schema
     || dataEngineerOutput.data_types
@@ -116,7 +94,6 @@ export default function DataEngineeringPage() {
   const missingValuesPct = dataEngineerOutput.missing_values_pct ?? 0
   const columnQuality = dataEngineerOutput.column_quality || []
 
-  // CRITICAL FIX: More lenient hasData check - show data if ANY field is present
   const hasData = columns.length > 0
     || Object.keys(schema).length > 0
     || qualityScore !== null
@@ -199,7 +176,6 @@ export default function DataEngineeringPage() {
                     {columns.map((col: string) => {
                       const colSchema = schema[col] || {}
                       const colQuality = columnQuality.find((c: any) => c.column === col) || {}
-                      // CRITICAL FIX: Handle both { type: ... } and direct string type formats
                       const colType = colSchema.type
                         || colQuality.type
                         || (typeof colSchema === 'string' ? colSchema : 'unknown')
@@ -257,9 +233,9 @@ export default function DataEngineeringPage() {
                   <TableBody>
                     {imputation.map((item: any, idx: number) => (
                       <TableRow key={idx}>
-                        <TableCell className="font-medium">{item.column || item.col || '\u2014'}</TableCell>
+                        <TableCell className="font-medium">{item.column || item.col || '—'}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize">{item.strategy || item.method || '\u2014'}</Badge>
+                          <Badge variant="outline" className="capitalize">{item.strategy || item.method || '—'}</Badge>
                         </TableCell>
                         <TableCell>{item.filled_count || item.count || 0}</TableCell>
                       </TableRow>
@@ -293,7 +269,7 @@ export default function DataEngineeringPage() {
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start">
                           <div>
-                            <h4 className="font-semibold">{detail.column || detail.col || '\u2014'}</h4>
+                            <h4 className="font-semibold">{detail.column || detail.col || '—'}</h4>
                             <p className="text-sm text-muted-foreground">
                               {detail.count || detail.outlier_count || 0} outliers detected
                             </p>
