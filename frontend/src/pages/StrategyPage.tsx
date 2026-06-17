@@ -1,14 +1,6 @@
 /**
- * Strategy Page - FIXED
- *
- * Key fixes:
- * 1. Properly fetches strategist output data
- * 2. Action cards show title, description, priority, and timeline
- * 3. Insights rendered as numbered list with proper text
- * 4. ROI projection with proper formatting
- * 5. All tabs have content
+ * Strategy Page
  */
-
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
@@ -17,10 +9,6 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Lightbulb, Target, ListTodo, Shield, AlertTriangle, ShieldAlert, FileUp, BarChart3 } from 'lucide-react'
 
-/**
- * CRITICAL FIX: Parse output_data that may arrive as a JSON string
- * from the backend instead of a parsed object.
- */
 function parseOutputData(data: any): Record<string, any> | null {
   if (data === null || data === undefined) return null
   if (typeof data === 'string') {
@@ -35,54 +23,39 @@ function parseOutputData(data: any): Record<string, any> | null {
 }
 
 export default function StrategyPage() {
-  const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
+  const { getAgentOutput, currentRun } = useStore()
   const [fetching, setFetching] = useState(false)
-  const [strategyData, setStrategyData] = useState<Record<string, any> | null>(null)
+  const [strategyData, setStrategyData] = useState<<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
 
     const loadData = async () => {
-      // Check store first
       const existing = getAgentOutput('strategist')
       if (existing && Object.keys(existing).length > 0) {
         setStrategyData(existing)
         return
       }
 
-      // CRITICAL FIX: Fetch from /results endpoint for normalized output_data
       setFetching(true)
       try {
         const res = await pipelineApi.getResults(currentRun.id)
         const executions = res.data?.executions || {}
-        const executionArray = Object.entries(executions).map(([agent_name, output_data]) => ({
-          agent_name,
-          output_data: parseOutputData(output_data) || output_data,
-          status: 'completed',
-        }))
-
-        if (executionArray.length > 0) {
-          setAgentExecutions(executionArray)
-          const stratOutput = parseOutputData(executions?.strategist)
-          if (stratOutput) {
-            setStrategyData(stratOutput)
-          }
+        const stratOutput = parseOutputData(executions?.strategist)
+        if (stratOutput) {
+          setStrategyData(stratOutput)
         }
       } catch (err) {
         console.error('Failed to fetch from /results:', err)
-        // Fallback to /status
         try {
           const res = await pipelineApi.getStatus(currentRun.id)
           const executions = res.data?.executions ?? []
-          if (executions.length > 0) {
-            setAgentExecutions(executions)
-            const stratExec = executions.find(
-              (e: any) => e.agent_name === 'strategist' && e.output_data
-            )
-            const parsed = parseOutputData(stratExec?.output_data)
-            if (parsed) {
-              setStrategyData(parsed)
-            }
+          const stratExec = executions.find(
+            (e: any) => e.agent_name === 'strategist' && e.output_data
+          )
+          const parsed = parseOutputData(stratExec?.output_data)
+          if (parsed) {
+            setStrategyData(parsed)
           }
         } catch (err2) {
           console.error('Failed to fetch from /status fallback:', err2)
@@ -93,16 +66,14 @@ export default function StrategyPage() {
     }
 
     loadData()
-    // CRITICAL FIX: Re-run when agentExecutions changes in the store
-  }, [currentRun?.id, agentExecutions, setAgentExecutions, getAgentOutput])
+    // CRITICAL FIX: Only depend on currentRun.id
+  }, [currentRun?.id])
 
-  // Get output from store or local state
   const strategyOutput = useMemo(() => {
     if (strategyData) return strategyData
     return getAgentOutput('strategist') || {}
-  }, [strategyData, agentExecutions, getAgentOutput])
+  }, [strategyData, getAgentOutput])
 
-  // CRITICAL FIX: Extract insights with proper type handling
   const insights = useMemo(() => {
     const raw = strategyOutput.business_insights || strategyOutput.insights || []
     if (!Array.isArray(raw)) return []
@@ -112,15 +83,12 @@ export default function StrategyPage() {
     }).filter((item: string) => item && item.length > 0)
   }, [strategyOutput])
 
-  // CRITICAL FIX: Extract actions with proper field mapping
   const actions = useMemo(() => {
-    // Try recommended_actions first, then recommendations, then fall back to insights
     let raw = strategyOutput.recommended_actions || []
     if (!Array.isArray(raw) || raw.length === 0) {
       raw = strategyOutput.recommendations || []
     }
 
-    // If still no actions, derive from insights
     if ((!Array.isArray(raw) || raw.length === 0) && insights.length > 0) {
       return insights.slice(0, 3).map((insight: string, i: number) => ({
         action: `Action ${i + 1}: ${insight.substring(0, 60)}${insight.length > 60 ? '...' : ''}`,
@@ -143,7 +111,6 @@ export default function StrategyPage() {
           expected_impact: '',
         }
       }
-      // CRITICAL FIX: Try multiple field names for action title
       const actionTitle = a.action
         || a.title
         || a.recommendation
@@ -166,7 +133,6 @@ export default function StrategyPage() {
   const qualityScore = strategyOutput.quality_score
   const executiveSummary = strategyOutput.executive_summary || ''
 
-  // SWOT analysis
   const swot = useMemo(() => {
     const defaultSwot = {
       strengths: insights.filter((i: string) =>
@@ -192,7 +158,6 @@ export default function StrategyPage() {
     return strategyOutput.swot || defaultSwot
   }, [strategyOutput, insights, risks])
 
-  // CRITICAL FIX: More lenient hasData check
   const hasData = insights.length > 0
     || actions.length > 0
     || executiveSummary
@@ -228,7 +193,6 @@ export default function StrategyPage() {
         <p className="text-sm text-muted-foreground mt-1">Analysis for: {currentRun.dataset_name}</p>
       </div>
 
-      {/* Executive Summary */}
       {executiveSummary && (
         <Card className="border-l-4 border-l-primary">
           <CardContent className="p-4">
@@ -253,7 +217,6 @@ export default function StrategyPage() {
           <TabsTrigger value="roi">ROI</TabsTrigger>
         </TabsList>
 
-        {/* Insights Tab */}
         <TabsContent value="insights" className="space-y-4">
           <Card>
             <CardHeader>
@@ -264,10 +227,7 @@ export default function StrategyPage() {
             </CardHeader>
             <CardContent>
               {insights.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Lightbulb className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No business insights generated.</p>
-                </div>
+                <p className="text-muted-foreground text-center py-8">No insights available.</p>
               ) : (
                 <div className="space-y-3">
                   {insights.map((insight: string, idx: number) => (
@@ -284,7 +244,6 @@ export default function StrategyPage() {
           </Card>
         </TabsContent>
 
-        {/* Actions Tab */}
         <TabsContent value="actions" className="space-y-4">
           <Card>
             <CardHeader>
@@ -293,62 +252,56 @@ export default function StrategyPage() {
                 Recommended Actions
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               {actions.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <ListTodo className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No recommended actions generated.</p>
-                </div>
+                <p className="text-muted-foreground text-center py-8">No actions available.</p>
               ) : (
-                <div className="space-y-3">
-                  {actions.map((action: any, idx: number) => (
-                    <Card key={idx} className="border-l-4 border-l-blue-500">
-                      <CardContent className="p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-semibold">{action.action}</h4>
-                          <Badge variant={
-                            action.priority === 'High' ? 'destructive' :
-                            action.priority === 'Medium' ? 'secondary' : 'outline'
-                          }>
-                            {action.priority}
-                          </Badge>
-                        </div>
-                        {action.description && (
-                          <p className="text-sm text-muted-foreground mb-2">{action.description}</p>
-                        )}
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Target className="h-4 w-4" />
-                          Timeline: {action.timeline}
-                        </div>
+                actions.map((action: any, idx: number) => (
+                  <Card key={idx} className="border-l-4 border-l-blue-500">
+                    <CardContent className="p-4">
+                      <div className="flex justify-between items-start mb-2">
+                        <h4 className="font-semibold">{action.action}</h4>
+                        <Badge variant={
+                          action.priority?.toLowerCase() === 'high' ? 'destructive' :
+                          action.priority?.toLowerCase() === 'medium' ? 'secondary' : 'outline'
+                        }>
+                          {action.priority}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2">{action.description}</p>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <Badge variant="outline">Timeline: {action.timeline}</Badge>
                         {action.expected_impact && (
-                          <p className="mt-2 text-sm text-green-600">{action.expected_impact}</p>
+                          <Badge variant="outline">Impact: {action.expected_impact}</Badge>
                         )}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* SWOT Tab */}
         <TabsContent value="swot" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Card className="border-l-4 border-l-green-500">
               <CardHeader>
-                <CardTitle className="text-green-600 flex items-center gap-2">
-                  <Shield className="h-5 w-5" />
+                <CardTitle className="flex items-center gap-2">
+                  <Target className="h-5 w-5" />
                   Strengths
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {swot.strengths?.length === 0 ? (
+                {swot.strengths.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No strengths identified.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.strengths.map((s: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-green-500">&#10003;</span> {s}</li>
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-green-500">+</span>
+                        {s}
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -357,18 +310,21 @@ export default function StrategyPage() {
 
             <Card className="border-l-4 border-l-yellow-500">
               <CardHeader>
-                <CardTitle className="text-yellow-600 flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5" />
                   Weaknesses
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {swot.weaknesses?.length === 0 ? (
+                {swot.weaknesses.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No weaknesses identified.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.weaknesses.map((w: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-yellow-500">!</span> {w}</li>
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-yellow-500">!</span>
+                        {w}
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -377,18 +333,21 @@ export default function StrategyPage() {
 
             <Card className="border-l-4 border-l-blue-500">
               <CardHeader>
-                <CardTitle className="text-blue-600 flex items-center gap-2">
-                  <Target className="h-5 w-5" />
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5" />
                   Opportunities
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {swot.opportunities?.length === 0 ? (
+                {swot.opportunities.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No opportunities identified.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.opportunities.map((o: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-blue-500">&#8594;</span> {o}</li>
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-blue-500">→</span>
+                        {o}
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -397,18 +356,21 @@ export default function StrategyPage() {
 
             <Card className="border-l-4 border-l-red-500">
               <CardHeader>
-                <CardTitle className="text-red-600 flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2">
                   <ShieldAlert className="h-5 w-5" />
                   Threats
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {swot.threats?.length === 0 ? (
+                {swot.threats.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No threats identified.</p>
                 ) : (
                   <ul className="space-y-2">
                     {swot.threats.map((t: string, i: number) => (
-                      <li key={i} className="text-sm flex gap-2"><span className="text-red-500">&#9888;</span> {t}</li>
+                      <li key={i} className="text-sm flex gap-2">
+                        <span className="text-red-500">×</span>
+                        {t}
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -417,7 +379,6 @@ export default function StrategyPage() {
           </div>
         </TabsContent>
 
-        {/* ROI Tab */}
         <TabsContent value="roi" className="space-y-4">
           <Card>
             <CardHeader>
@@ -427,65 +388,75 @@ export default function StrategyPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="p-4 bg-muted rounded-lg text-center">
-                  <div className="text-sm text-muted-foreground mb-1">Conservative</div>
-                  <div className="text-2xl font-bold text-yellow-500">{roi.conservative || 'N/A'}</div>
-                </div>
-                <div className="p-4 bg-muted rounded-lg text-center">
-                  <div className="text-sm text-muted-foreground mb-1">Moderate</div>
-                  <div className="text-2xl font-bold text-blue-500">{roi.moderate || 'N/A'}</div>
-                </div>
-                <div className="p-4 bg-muted rounded-lg text-center">
-                  <div className="text-sm text-muted-foreground mb-1">Optimistic</div>
-                  <div className="text-2xl font-bold text-green-500">{roi.optimistic || 'N/A'}</div>
-                </div>
-              </div>
-              {scenarios.best_case && (
-                <div className="mt-4 p-3 bg-muted rounded-lg">
-                  <h4 className="font-semibold mb-2">Scenario Multipliers</h4>
-                  <div className="flex flex-wrap gap-4 text-sm">
-                    <span>Best: <Badge variant="default">{scenarios.best_case}x</Badge></span>
-                    <span>Base: <Badge variant="secondary">{scenarios.base_case}x</Badge></span>
-                    <span>Worst: <Badge variant="outline">{scenarios.worst_case}x</Badge></span>
-                  </div>
+              {Object.keys(roi).length === 0 && Object.keys(scenarios).length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">No ROI projection data available.</p>
+              ) : (
+                <div className="space-y-4">
+                  {Object.keys(roi).length > 0 && (
+                    <div className="grid gap-4 md:grid-cols-3">
+                      {Object.entries(roi).map(([key, value]: [string, any]) => (
+                        <Card key={key}>
+                          <CardContent className="p-4">
+                            <p className="text-sm text-muted-foreground capitalize">{key.replace(/_/g, ' ')}</p>
+                            <p className="text-2xl font-bold">{typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : value}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                  {Object.keys(scenarios).length > 0 && (
+                    <div className="grid gap-4 md:grid-cols-3">
+                      {Object.entries(scenarios).map(([key, value]: [string, any]) => (
+                        <Card key={key}>
+                          <CardContent className="p-4">
+                            <p className="text-sm text-muted-foreground capitalize">{key.replace(/_/g, ' ')}</p>
+                            <p className="text-2xl font-bold">{typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : value}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldAlert className="h-5 w-5" />
-                Risk Matrix
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {risks.length === 0 ? (
-                <div className="text-center py-4 text-muted-foreground">
-                  <ShieldAlert className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No risks identified.</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
+          {risks.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Risk Matrix
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
                   {risks.map((risk: any, idx: number) => (
-                    <div key={idx} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                      <span className="font-medium">{risk.risk || risk.threat || '\u2014'}</span>
+                    <div key={idx} className="flex justify-between items-center p-3 bg-muted rounded-lg">
+                      <div>
+                        <p className="font-medium text-sm">{risk.risk || risk.name || `Risk ${idx + 1}`}</p>
+                        <p className="text-xs text-muted-foreground">{risk.description || risk.impact || ''}</p>
+                      </div>
                       <div className="flex gap-2">
-                        <Badge variant={risk.likelihood === 'High' ? 'destructive' : risk.likelihood === 'Medium' ? 'secondary' : 'outline'}>
-                          Likelihood: {risk.likelihood || 'N/A'}
+                        <Badge variant={
+                          risk.likelihood?.toLowerCase() === 'high' ? 'destructive' :
+                          risk.likelihood?.toLowerCase() === 'medium' ? 'secondary' : 'outline'
+                        }>
+                          {risk.likelihood || 'N/A'}
                         </Badge>
-                        <Badge variant={risk.impact === 'High' ? 'destructive' : risk.impact === 'Medium' ? 'secondary' : 'outline'}>
-                          Impact: {risk.impact || 'N/A'}
+                        <Badge variant={
+                          risk.impact?.toLowerCase() === 'high' ? 'destructive' :
+                          risk.impact?.toLowerCase() === 'medium' ? 'secondary' : 'outline'
+                        }>
+                          {risk.impact || 'N/A'}
                         </Badge>
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
     </div>
