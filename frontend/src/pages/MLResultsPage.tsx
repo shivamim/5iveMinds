@@ -1,39 +1,63 @@
+
+
 import { useEffect, useState, useMemo } from 'react'
 import { useStore } from '@/stores/appStore'
 import { pipelineApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Brain, Trophy, BarChart3, Zap, FileUp } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { Brain, Trophy, Zap, FileUp } from 'lucide-react'
+
+const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6']
 
 export default function MLResultsPage() {
   const { getAgentOutput, currentRun, setAgentExecutions, agentExecutions } = useStore()
   const [fetching, setFetching] = useState(false)
+  const [mlOutput, setMlOutput] = useState<Record<string, any> | null>(null)
 
   useEffect(() => {
     if (!currentRun?.id) return
-    const loadData = async () => {
-      const existing = getAgentOutput('ml_engineer')
-      if (existing && Object.keys(existing).length > 0) return
 
+    const loadData = async () => {
+      // Check store first
+      const existing = getAgentOutput('ml_engineer')
+      if (existing && Object.keys(existing).length > 0) {
+        setMlOutput(existing)
+        return
+      }
+
+      // Fetch from API
       setFetching(true)
       try {
         const res = await pipelineApi.getStatus(currentRun.id)
         const executions = res.data?.executions ?? []
         if (executions.length > 0) {
           setAgentExecutions(executions)
+          const mlExec = executions.find(
+            (e: any) => e.agent_name === 'ml_engineer' && e.output_data
+          )
+          if (mlExec?.output_data) {
+            setMlOutput(mlExec.output_data)
+          }
         }
       } catch (err) {
-        console.error('Failed to fetch agent data:', err)
+        console.error('Failed to fetch ML data:', err)
       } finally {
         setFetching(false)
       }
     }
+
     loadData()
   }, [currentRun?.id, setAgentExecutions, getAgentOutput])
 
-  const mlOutput = useMemo(() => getAgentOutput('ml_engineer') || {}, [agentExecutions, getAgentOutput])
+  // Get output from store or local state
+  const mlEngineerOutput = useMemo(() => {
+    if (mlOutput) return mlOutput
+    return getAgentOutput('ml_engineer') || {}
+  }, [mlOutput, agentExecutions, getAgentOutput])
 
+  // Also check designer output for feature importance fallback
   const designerOutput = useMemo(() => getAgentOutput('designer') || {}, [agentExecutions, getAgentOutput])
   const designerFeatureImportance = useMemo(() => {
     const specs = designerOutput?.chart_specs || []
@@ -41,19 +65,49 @@ export default function MLResultsPage() {
     return fiSpec?.data || null
   }, [designerOutput])
 
-  const bestModel = mlOutput.best_model || 'N/A'
-  const bestR2 = mlOutput.best_r2
-  const bestRmse = mlOutput.best_rmse
-  const featureImportance = mlOutput.feature_importance || designerFeatureImportance || {}
-  const modelsEvaluated = mlOutput.models_evaluated || []
-  const qualityScore = mlOutput.quality_score
-  const shapSummary = mlOutput.shap_summary || mlOutput.shap_values || {}
+  // Extract all data with fallbacks
+  const bestModel = mlEngineerOutput.best_model || 'N/A'
+  const bestR2 = mlEngineerOutput.best_r2
+  const bestRmse = mlEngineerOutput.best_rmse
+  const featureImportance = mlEngineerOutput.feature_importance || designerFeatureImportance || {}
+  const modelsEvaluated = mlEngineerOutput.models_evaluated || []
+  const qualityScore = mlEngineerOutput.quality_score
+  const shapSummary = mlEngineerOutput.shap_summary || mlEngineerOutput.shap_values || {}
+  const dataProfile = mlEngineerOutput.data_profile || {}
 
-  const features = Object.entries(featureImportance)
-    .sort(([, a], [, b]) => (b as number) - (a as number))
-    .slice(0, 10)
+  // Prepare feature importance data for chart
+  const featureImportanceData = useMemo(() => {
+    return Object.entries(featureImportance)
+      .map(([name, value]) => ({
+        name: name.length > 20 ? name.substring(0, 20) + '...' : name,
+        fullName: name,
+        importance: Number(value) || 0,
+        percentage: (Number(value) || 0) * 100,
+      }))
+      .sort((a, b) => b.importance - a.importance)
+      .slice(0, 10)
+  }, [featureImportance])
 
-  const hasData = bestModel !== 'N/A' || features.length > 0 || modelsEvaluated.length > 0 || Object.keys(shapSummary).length > 0
+  // Prepare SHAP data
+  const shapData = useMemo(() => {
+    return Object.entries(shapSummary)
+      .map(([feature, data]: [string, any]) => ({
+        feature: feature.length > 20 ? feature.substring(0, 20) + '...' : feature,
+        fullFeature: feature,
+        positive: Number(data?.positive) || 0,
+        negative: Number(data?.negative) || 0,
+        importance: Number(data?.importance) || 0,
+      }))
+      .sort((a, b) => b.importance - a.importance)
+      .slice(0, 10)
+  }, [shapSummary])
+
+  // CRITICAL FIX: More lenient hasData check
+  const hasData = bestModel !== 'N/A'
+    || featureImportanceData.length > 0
+    || modelsEvaluated.length > 0
+    || shapData.length > 0
+    || Object.keys(dataProfile).length > 0
 
   if (!currentRun) {
     return (
@@ -85,6 +139,7 @@ export default function MLResultsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
+        {/* Best Model Card */}
         <Card className="border-l-4 border-l-green-500">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -95,48 +150,75 @@ export default function MLResultsPage() {
           <CardContent>
             <div className="text-3xl font-bold mb-2">{bestModel}</div>
             <div className="flex flex-wrap gap-2 mb-4">
-              <Badge variant="outline">R² = {bestR2 ?? 'N/A'}</Badge>
+              <Badge variant="outline">R2 = {bestR2 ?? 'N/A'}</Badge>
               <Badge variant="outline">RMSE = {bestRmse ?? 'N/A'}</Badge>
               <Badge variant="outline">Quality: {qualityScore ?? 'N/A'}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
               Selected as the top-performing model across {modelsEvaluated.length || 1} candidates.
             </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              Feature Importance
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {features.length === 0 ? (
-              <div className="text-center py-4 text-muted-foreground">
-                <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>No feature importance data available.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {features.map(([name, importance], idx) => {
-                  const pct = (importance as number) * 100
-                  return (
-                    <div key={name}>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="font-medium">{name}</span>
-                        <span>{pct.toFixed(1)}%</span>
-                      </div>
-                      <Progress value={pct} className="h-2" />
-                    </div>
-                  )
-                })}
+            {dataProfile && (
+              <div className="mt-3 text-xs text-muted-foreground bg-muted p-2 rounded">
+                <div>Numeric features: {dataProfile.numeric_features ?? 'N/A'}</div>
+                <div>Categorical features: {dataProfile.categorical_features ?? 'N/A'}</div>
+                <div>Data quality: {dataProfile.data_quality_score ?? 'N/A'}/100</div>
               </div>
             )}
           </CardContent>
         </Card>
 
+        {/* Feature Importance Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart className="h-5 w-5" />
+              Feature Importance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {featureImportanceData.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground">
+                <BarChart className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No feature importance data available.</p>
+              </div>
+            ) : (
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={[...featureImportanceData].reverse()}
+                    layout="vertical"
+                    margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} />
+                    <YAxis
+                      dataKey="name"
+                      type="category"
+                      tick={{ fontSize: 10 }}
+                      width={80}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1f2937',
+                        border: '1px solid #374151',
+                        borderRadius: '6px',
+                        fontSize: '12px'
+                      }}
+                      formatter={(value: any) => [`${(Number(value) * 100).toFixed(1)}%`, 'Importance']}
+                    />
+                    <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
+                      {featureImportanceData.map((_, i) => (
+                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Model Comparison Card */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -159,7 +241,7 @@ export default function MLResultsPage() {
                       <p className="text-xs text-muted-foreground">{model.reason || model.suitable_for || ''}</p>
                     </div>
                     <div className="flex gap-2">
-                      <Badge variant="outline">R²={model.r2 ?? 'N/A'}</Badge>
+                      <Badge variant="outline">R2={model.r2 ?? 'N/A'}</Badge>
                       <Badge variant="outline">RMSE={model.rmse ?? 'N/A'}</Badge>
                     </div>
                   </div>
@@ -169,6 +251,7 @@ export default function MLResultsPage() {
           </CardContent>
         </Card>
 
+        {/* SHAP Summary Card */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -177,27 +260,39 @@ export default function MLResultsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {Object.keys(shapSummary).length === 0 ? (
+            {shapData.length === 0 ? (
               <div className="text-center py-4 text-muted-foreground">
                 <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
                 <p>No SHAP summary available from the ML Engineer agent.</p>
               </div>
             ) : (
-              <div className="space-y-2">
-                {Object.entries(shapSummary).map(([feature, data]: [string, any]) => (
-                  <div key={feature} className="flex justify-between items-center p-2 bg-muted rounded">
-                    <span className="font-medium">{feature}</span>
-                    <div className="flex gap-3 text-sm">
-                      <span className="text-green-500">+{data.positive?.toFixed?.(3) ?? data.positive ?? 0}</span>
-                      <span className="text-red-500">{data.negative?.toFixed?.(3) ?? data.negative ?? 0}</span>
-                      {data.importance && (
-                        <Badge variant="outline" className="text-xs">
-                          {data.importance?.toFixed?.(3) ?? data.importance}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                ))}
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={[...shapData].reverse()}
+                    layout="vertical"
+                    margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} />
+                    <YAxis
+                      dataKey="feature"
+                      type="category"
+                      tick={{ fontSize: 10 }}
+                      width={80}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1f2937',
+                        border: '1px solid #374151',
+                        borderRadius: '6px',
+                        fontSize: '12px'
+                      }}
+                    />
+                    <Bar dataKey="positive" stackId="shap" fill="#10b981" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="negative" stackId="shap" fill="#ef4444" />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             )}
           </CardContent>
