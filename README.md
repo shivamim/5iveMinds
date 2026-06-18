@@ -4,7 +4,7 @@
 
 <br/>
 
-[![Live App](https://img.shields.io/badge/%F0%9F%9A%80%20LIVE%20APP-Visit%20Now-6366f1?style=for-the-badge)](https://5ive-minds-two.vercel.app)
+[![Live App](https://img.shields.io/badge/%F0%9F%9A%80%20LIVE%20APP-Visit%20Now-6366f1?style=for-the-badge)](https://fiveminds-9ru0.onrender.com)
 [![API Docs](https://img.shields.io/badge/%F0%9F%93%96%20API-Swagger%20Docs-a855f7?style=for-the-badge)](#api-reference)
 [![License](https://img.shields.io/badge/%F0%9F%93%9C%20License-MIT-22c55e?style=for-the-badge)](LICENSE)
 [![Built With](https://img.shields.io/badge/%F0%9F%A4%96%20Built%20With-Groq%20%2B%20FastAPI-f97316?style=for-the-badge)](https://console.groq.com)
@@ -44,7 +44,7 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 
 ## ✨ How It Works
 
-```
+```text
   [ 1. Upload ]  -->  [ 2. Ask ]  -->  [ 3. Watch ]  -->  [ 4. Export ]
   Drop your CSV       Ask anything      5 agents live      Boardroom-ready
   or Excel file       in plain English  in real time       in 4 formats
@@ -57,9 +57,9 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 | Feature | Description |
 |---------|-------------|
 | 🔴 **Pipeline Dashboard** | Live agent progress, quality scores, execution logs in real time |
-| 📈 **Statistical Analysis** | Distribution charts, correlation heatmaps, hypothesis test results |
+| 📈 **Statistical Analysis** | Real Pearson correlations, distribution histograms, hypothesis tests |
 | 🤖 **ML Results** | Feature importance, 5-model AutoML comparison, SHAP summary |
-| 💡 **Strategic Insights** | ROI projections, churn targets, prioritized recommendations |
+| 💡 **Strategic Insights** | Context-aware ROI projections and prioritized recommendations via Llama 3 |
 | 📄 **Executive Report** | One-click export in PDF, Excel, PPT, or HTML |
 | 🌗 **Dark / Light Mode** | Fully responsive, mobile-friendly UI |
 | 🔁 **Pipeline History** | View and revisit all past analyses |
@@ -77,7 +77,7 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 | ⚙️ **Backend** | FastAPI (async), SQLAlchemy 2.0, asyncpg, Pydantic v2, WebSockets |
 | 🗄️ **Database** | Supabase PostgreSQL 15 |
 | 🤖 **LLM** | Groq API — Llama 3 8B / 70B |
-| ☁️ **Hosting** | Vercel (frontend) + Railway (backend) + Supabase (database) |
+| ☁️ **Hosting** | Render (frontend) + Railway (backend) + Supabase (database) |
 
 </div>
 
@@ -85,9 +85,9 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 
 ## 🏗️ Architecture
 
-```
+```text
 +--------------------------------------------------+
-|             FRONTEND  (Vercel)                   |
+|             FRONTEND  (Render)                   |
 |  React 18 + Vite + TypeScript + Tailwind CSS     |
 |  Zustand  |  Recharts  |  Framer Motion          |
 +-------------------------+------------------------+
@@ -154,7 +154,7 @@ npm run dev
 
 ### Step 4 — Open
 
-```
+```text
 🌐  Frontend   ->  http://localhost:5173
 📖  API Docs   ->  http://localhost:8000/docs
 ❤️  Health     ->  http://localhost:8000/health
@@ -169,8 +169,8 @@ npm run dev
 ```env
 DATABASE_URL        = postgresql://postgres.YOUR_REF:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 GROQ_API_KEY        = gsk_xxxxxxxxxxxxxxxxxxxx
-FRONTEND_URL        = https://your-frontend.vercel.app
-CORS_ORIGINS_STR    = https://your-frontend.vercel.app,http://localhost:5173
+FRONTEND_URL        = https://your-frontend.onrender.com
+CORS_ORIGINS_STR    = https://your-frontend.onrender.com,http://localhost:5173
 SECRET_KEY          = your-random-32-char-string
 ENVIRONMENT         = production
 VERSION             = 2.0.0
@@ -180,7 +180,7 @@ VERSION             = 2.0.0
 > Use Supabase port **5432** (session mode), NOT **6543** (transaction mode).
 > Port 6543 breaks asyncpg prepared statements.
 
-### Frontend (Vercel)
+### Frontend (Render)
 
 ```env
 VITE_API_URL = https://your-backend.up.railway.app
@@ -212,7 +212,7 @@ VITE_API_URL = https://your-backend.up.railway.app
 Supabase transaction-mode pooler (port 6543) does not support asyncpg prepared statements.
 
 ```python
-# backend/app/db/database.py
+# backend/app/database.py
 create_async_engine(
     ASYNC_DATABASE_URL,
     pool_pre_ping=True,
@@ -228,8 +228,7 @@ create_async_engine(
 
 ### Fix 2 — Background Task Session Lifecycle
 
-FastAPI closes the request-scoped DB session before background tasks finish.
-Pass a `session_maker` factory instead of the live session.
+FastAPI closes the request-scoped DB session before background tasks finish. Pass a `session_maker` factory instead of the live session.
 
 ```python
 # backend/app/api/v1/pipeline.py
@@ -241,6 +240,37 @@ background_tasks.add_task(
 )
 ```
 
+### Fix 3 — PostgreSQL ENUM Type Mapping
+
+`asyncpg` strictly rejects standard Python strings when inserting into native Postgres ENUM columns. We use SQLAlchemy's dialect-specific `PG_ENUM` to bridge the ORM and Supabase perfectly.
+
+```python
+# backend/app/models.py
+status = Column(
+    PG_ENUM(PipelineStatus, name="pipelinestatus", create_type=False),
+    default=PipelineStatus.QUEUED, nullable=False
+)
+```
+
+### Fix 4 — Autonomous Schema Auto-Migration
+
+SQLAlchemy's `Base.metadata.create_all()` ignores missing columns on existing tables. We engineered a lifespan hook that executes raw `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements on boot, guaranteeing zero-downtime schema evolution without Alembic.
+
+```python
+# backend/app/main.py
+raw_migrations = [
+    "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS rich_profile JSONB",
+    "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS output_data JSONB",
+    # ...
+]
+for sql in raw_migrations:
+    sync_conn.execute(text(sql))
+```
+
+### Fix 5 — Real Statistical Profiling Engine
+
+Replaced mock agent outputs with a real Pandas/NumPy profiling engine. On upload, the backend computes Pearson correlations, IQR outlier detection, and histograms, which are then injected dynamically into the Groq Llama 3 Strategist prompt for context-aware executive reports.
+
 ---
 
 ## 🗺️ Roadmap
@@ -248,6 +278,7 @@ background_tasks.add_task(
 | Status | Feature |
 |--------|---------|
 | ✅ | 5-agent AI pipeline with real LLM (Groq) |
+| ✅ | Real Data Profiling (Histograms, Correlations, Outliers) |
 | ✅ | AutoML — 5-model comparison + SHAP explainability |
 | ✅ | Real-time WebSocket progress tracking |
 | ✅ | Export: PDF, Excel, PPT, HTML |
