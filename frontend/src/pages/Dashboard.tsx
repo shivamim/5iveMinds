@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { usePipeline, getAgentOutput } from '@/hooks/usePipeline';
 import { ChartRenderer } from '@/components/ChartRenderer';
 import { downloadPdfReport } from '@/services/api';
-import { Loader2, CheckCircle2, AlertCircle, BarChart3, Database, LineChart, FileText, BrainCircuit, Sparkles, Activity, TrendingUp, ShieldCheck, FileDown, AlertTriangle } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, BarChart3, Database, LineChart, FileText, BrainCircuit, Sparkles, Activity, ShieldCheck, FileDown, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function Dashboard() {
@@ -37,7 +37,6 @@ export function Dashboard() {
     }
   };
 
-  // 🛡️ CRITICAL FIX: Kills the infinite spinner if pipeline finishes but data is missing
   const renderTab = (agentOutput: any, content: React.ReactNode) => {
     if (error) return <div className="p-8 text-center text-red-500 bg-red-50 rounded-lg border border-red-200">Pipeline Failed: {error}</div>;
     if (!agentOutput && !isComplete) return <LoadingState />;
@@ -55,7 +54,9 @@ export function Dashboard() {
     { id: 'strategist', name: 'Strategist', icon: FileText, desc: 'Executive Strategy' },
   ];
 
-  const bestModel = ml?.models_tested?.find((m: any) => m.name === ml.best_model) || ml?.models_tested?.[0];
+  // 🛡️ Safe extraction of best model
+  const modelsList = ml?.models_tested || [];
+  const bestModel = modelsList.find((m: any) => m?.name === ml?.best_model) || modelsList[0];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/20 to-background">
@@ -92,7 +93,7 @@ export function Dashboard() {
         {/* AGENT TIMELINE */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {agents.map((agent) => {
-            const exec = Array.isArray(executions) ? executions.find(e => e.agent_name === agent.id) : null;
+            const exec = Array.isArray(executions) ? executions.find((e: any) => e?.agent_name === agent.id) : null;
             const execStatus = exec?.status?.toLowerCase() || 'pending';
             const Icon = agent.icon;
             return (
@@ -125,7 +126,7 @@ export function Dashboard() {
                 <CardHeader><CardTitle className="flex items-center gap-2 text-2xl"><FileText className="w-6 h-6 text-blue-600" /> Executive Strategy Report</CardTitle></CardHeader>
                 <CardContent>
                   <ScrollArea className="h-[600px] pr-4">
-                    <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground prose prose-blue max-w-none dark:prose-invert">{strategist.report || JSON.stringify(strategist, null, 2)}</pre>
+                    <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground prose prose-blue max-w-none dark:prose-invert">{strategist?.report || JSON.stringify(strategist, null, 2)}</pre>
                   </ScrollArea>
                 </CardContent>
               </Card>
@@ -139,26 +140,27 @@ export function Dashboard() {
                   <Card className="border-2 shadow-lg">
                     <CardHeader><CardTitle className="flex items-center gap-2"><BrainCircuit className="w-5 h-5 text-purple-600" /> AutoML Arena & Cross-Validation</CardTitle></CardHeader>
                     <CardContent>
-                      <p className="text-sm text-muted-foreground mb-4">Target: <Badge variant="outline">{ml.target_column}</Badge> ({ml.is_classification ? 'Classification' : 'Regression'})</p>
+                      <p className="text-sm text-muted-foreground mb-4">Target: <Badge variant="outline">{ml?.target_column}</Badge> ({ml?.is_classification ? 'Classification' : 'Regression'})</p>
                       <div className="space-y-4">
-                        {(ml.models_tested || []).map((m: any, i: number) => (
-                          <div key={i} className={`p-4 rounded-lg border ${m.name === ml.best_model ? 'bg-green-50 border-green-300' : 'bg-muted'}`}>
+                        {/* 🛡️ .filter(Boolean) prevents crashes if backend sends null */}
+                        {modelsList.filter(Boolean).map((m: any, i: number) => (
+                          <div key={i} className={`p-4 rounded-lg border ${m?.name === ml?.best_model ? 'bg-green-50 border-green-300' : 'bg-muted'}`}>
                             <div className="flex justify-between items-center mb-2">
-                              <span className="font-bold text-lg">{m.name}</span>
-                              {m.name === ml.best_model && <Badge className="bg-green-600">Champion</Badge>}
+                              <span className="font-bold text-lg">{m?.name}</span>
+                              {m?.name === ml?.best_model && <Badge className="bg-green-600">Champion</Badge>}
                             </div>
                             <div className="grid grid-cols-2 gap-2 text-sm">
-                              {m.accuracy !== undefined && <div>Accuracy: <b>{(m.accuracy * 100).toFixed(1)}%</b></div>}
-                              {m.precision !== undefined && <div>Precision: <b>{(m.precision * 100).toFixed(1)}%</b></div>}
-                              {m.recall !== undefined && <div>Recall: <b>{(m.recall * 100).toFixed(1)}%</b></div>}
-                              {m.roc_auc !== undefined && <div>ROC-AUC: <b>{m.roc_auc.toFixed(3)}</b></div>}
-                              {m.r2_score !== undefined && <div>R² Score: <b>{m.r2_score.toFixed(3)}</b></div>}
-                              {m.rmse !== undefined && <div>RMSE: <b>{m.rmse.toFixed(2)}</b></div>}
-                              {m.mae !== undefined && <div>MAE: <b>{m.mae.toFixed(2)}</b></div>}
-                              {m.adj_r2 !== undefined && <div>Adj R²: <b>{m.adj_r2.toFixed(3)}</b></div>}
+                              {m?.accuracy !== undefined && <div>Accuracy: <b>{(m.accuracy * 100).toFixed(1)}%</b></div>}
+                              {m?.precision !== undefined && <div>Precision: <b>{(m.precision * 100).toFixed(1)}%</b></div>}
+                              {m?.recall !== undefined && <div>Recall: <b>{(m.recall * 100).toFixed(1)}%</b></div>}
+                              {m?.roc_auc !== undefined && <div>ROC-AUC: <b>{m.roc_auc.toFixed(3)}</b></div>}
+                              {m?.r2_score !== undefined && <div>R² Score: <b>{m.r2_score.toFixed(3)}</b></div>}
+                              {m?.rmse !== undefined && <div>RMSE: <b>{m.rmse.toFixed(2)}</b></div>}
+                              {m?.mae !== undefined && <div>MAE: <b>{m.mae.toFixed(2)}</b></div>}
+                              {m?.adj_r2 !== undefined && <div>Adj R²: <b>{m.adj_r2.toFixed(3)}</b></div>}
                             </div>
                             <div className="mt-2 text-xs text-muted-foreground flex items-center gap-1">
-                              <Activity className="w-3 h-3" /> CV Stability: ±{(m.cv_std * 100).toFixed(1)}%
+                              <Activity className="w-3 h-3" /> CV Stability: ±{((m?.cv_std || 0) * 100).toFixed(1)}%
                             </div>
                           </div>
                         ))}
@@ -169,7 +171,7 @@ export function Dashboard() {
                   <Card className="border-2 shadow-lg">
                     <CardHeader><CardTitle className="flex items-center gap-2"><BarChart3 className="w-5 h-5 text-blue-600" /> Feature Importance (SHAP)</CardTitle></CardHeader>
                     <CardContent>
-                      <ChartRenderer chart={{chart_type: 'bar_chart', chart_data: ml.shap_values}} />
+                      <ChartRenderer chart={{chart_type: 'bar_chart', chart_data: ml?.shap_values || []}} />
                     </CardContent>
                   </Card>
                 </div>
@@ -183,14 +185,14 @@ export function Dashboard() {
                           <thead>
                             <tr>
                               <th className="p-2"></th>
-                              {bestModel.classes?.map((c: string, i: number) => <th key={i} className="p-2 text-sm font-bold text-center">Pred: {c}</th>)}
+                              {(bestModel.classes || []).filter(Boolean).map((c: string, i: number) => <th key={i} className="p-2 text-sm font-bold text-center">Pred: {c}</th>)}
                             </tr>
                           </thead>
                           <tbody>
-                            {bestModel.confusion_matrix.map((row: number[], i: number) => (
+                            {bestModel.confusion_matrix.filter(Boolean).map((row: number[], i: number) => (
                               <tr key={i}>
                                 <td className="p-2 text-sm font-bold text-right pr-4">Actual: {bestModel.classes?.[i]}</td>
-                                {row.map((val: number, j: number) => (
+                                {row.filter(Boolean).map((val: number, j: number) => (
                                   <td key={j} className={`p-4 text-center font-bold text-lg border ${i === j ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                                     {val}
                                   </td>
@@ -214,7 +216,7 @@ export function Dashboard() {
                   <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-red-600" /> Multicollinearity (VIF)</CardTitle></CardHeader>
                   <CardContent>
                     <p className="text-sm text-muted-foreground mb-4">Variance Inflation Factor. Values &gt; 5 indicate high multicollinearity.</p>
-                    <ChartRenderer chart={{chart_type: 'bar_chart', chart_data: stats.vif}} />
+                    <ChartRenderer chart={{chart_type: 'bar_chart', chart_data: stats?.vif || []}} />
                   </CardContent>
                 </Card>
 
@@ -224,7 +226,7 @@ export function Dashboard() {
                     <CardContent>
                       <ScrollArea className="h-[400px]">
                         <div className="space-y-3">
-                          {(stats.correlations || []).map((c: any, i: number) => (
+                          {(stats?.correlations || []).filter(Boolean).map((c: any, i: number) => (
                             <div key={i} className="p-3 border rounded-lg flex justify-between items-center">
                               <div>
                                 <p className="font-medium text-sm">{c.var1} ↔ {c.var2}</p>
@@ -252,7 +254,7 @@ export function Dashboard() {
                             <tr><th className="px-2 py-2">Feature</th><th className="px-2 py-2">Shapiro (p)</th><th className="px-2 py-2">Skew</th><th className="px-2 py-2">Kurt</th></tr>
                           </thead>
                           <tbody>
-                            {(stats.normality || []).map((n: any, i: number) => (
+                            {(stats?.normality || []).filter(Boolean).map((n: any, i: number) => (
                               <tr key={i} className="border-b">
                                 <td className="px-2 py-2 font-medium">{n.feature}</td>
                                 <td className="px-2 py-2">
@@ -278,17 +280,17 @@ export function Dashboard() {
             {renderTab(dataEng, (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <StatCard title="Data Quality Score" value={`${dataEng.quality_score}/100`} icon={<ShieldCheck className="w-5 h-5" />} color={dataEng.quality_score > 80 ? "text-green-600" : "text-orange-600"} />
-                  <StatCard title="Total Rows" value={dataEng.row_count || 'N/A'} icon={<Database className="w-5 h-5" />} />
-                  <StatCard title="Duplicate Rows" value={dataEng.duplicates || 0} icon={<AlertCircle className="w-5 h-5" />} color={dataEng.duplicates > 0 ? "text-red-600" : "text-foreground"} />
-                  <StatCard title="Missing Data" value={dataEng.missing_values_pct || '0%'} icon={<AlertTriangle className="w-5 h-5" />} />
+                  <StatCard title="Data Quality Score" value={`${dataEng?.quality_score || 0}/100`} icon={<ShieldCheck className="w-5 h-5" />} color={(dataEng?.quality_score || 0) > 80 ? "text-green-600" : "text-orange-600"} />
+                  <StatCard title="Total Rows" value={dataEng?.row_count || 'N/A'} icon={<Database className="w-5 h-5" />} />
+                  <StatCard title="Duplicate Rows" value={dataEng?.duplicates || 0} icon={<AlertCircle className="w-5 h-5" />} color={(dataEng?.duplicates || 0) > 0 ? "text-red-600" : "text-foreground"} />
+                  <StatCard title="Missing Data" value={dataEng?.missing_values_pct || '0%'} icon={<AlertTriangle className="w-5 h-5" />} />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                    <Card className="border-2 shadow-lg">
                       <CardHeader><CardTitle>Outlier Detection (IQR Method)</CardTitle></CardHeader>
                       <CardContent>
                          <ScrollArea className="h-[300px]">
-                            <pre className="bg-muted p-4 rounded-lg text-xs">{JSON.stringify(dataEng.outlier_details || [], null, 2)}</pre>
+                            <pre className="bg-muted p-4 rounded-lg text-xs">{JSON.stringify(dataEng?.outlier_details || [], null, 2)}</pre>
                          </ScrollArea>
                       </CardContent>
                    </Card>
@@ -296,7 +298,7 @@ export function Dashboard() {
                       <CardHeader><CardTitle>Imputation Log</CardTitle></CardHeader>
                       <CardContent>
                          <ScrollArea className="h-[300px]">
-                            <pre className="bg-muted p-4 rounded-lg text-xs">{JSON.stringify(dataEng.imputation_log || [], null, 2)}</pre>
+                            <pre className="bg-muted p-4 rounded-lg text-xs">{JSON.stringify(dataEng?.imputation_log || [], null, 2)}</pre>
                          </ScrollArea>
                       </CardContent>
                    </Card>
