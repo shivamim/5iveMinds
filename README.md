@@ -32,11 +32,11 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 
 | # | Agent | Role | Output |
 |---|-------|------|--------|
-| 1 | 🔧 **Data Engineer** | Schema inference, cleaning, imputation, outlier detection | Clean dataset + quality score |
-| 2 | 📊 **Statistician** | EDA, distributions, hypothesis testing, correlations | Statistical summary + significance tests |
-| 3 | 🤖 **ML Engineer** | AutoML across 5 models, SHAP explainability | Best model + feature importance |
-| 4 | 🧠 **Strategist** | Business insights, ROI analysis, recommendations | Action plan + ROI projections |
-| 5 | 🎨 **Designer** | Report compilation and export generation | PDF / Excel / PPT / HTML |
+| 1 |  **Data Engineer** | Schema inference, cleaning, imputation, outlier detection | Clean dataset + quality score |
+| 2 |  **Statistician** | EDA, distributions, hypothesis testing, correlations | Statistical summary + significance tests |
+| 3 |  **ML Engineer** | AutoML across 5 models, SHAP explainability | Best model + feature importance |
+| 4 |  **Strategist** | Business insights, ROI analysis, recommendations | Action plan + ROI projections |
+| 5 |  **Designer** | Report compilation and export generation | PDF / Excel / PPT / HTML |
 
 > ⚡ **Pipeline completes in under 30 seconds. Quality scored out of 100.**
 
@@ -56,14 +56,14 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 
 | Feature | Description |
 |---------|-------------|
-| 🔴 **Pipeline Dashboard** | Live agent progress, quality scores, execution logs in real time |
-| 📈 **Statistical Analysis** | Real Pearson correlations, distribution histograms, hypothesis tests |
-| 🤖 **ML Results** | Feature importance, 5-model AutoML comparison, SHAP summary |
-| 💡 **Strategic Insights** | Context-aware ROI projections and prioritized recommendations via Llama 3 |
-| 📄 **Executive Report** | One-click export in PDF, Excel, PPT, or HTML |
-| 🌗 **Dark / Light Mode** | Fully responsive, mobile-friendly UI |
-| 🔁 **Pipeline History** | View and revisit all past analyses |
-| ⚡ **Real-Time Updates** | WebSocket + polling for live agent progress |
+|  **Pipeline Dashboard** | Live agent progress, quality scores, execution logs in real time |
+|  **Statistical Analysis** | Real Pearson correlations, distribution histograms, hypothesis tests |
+|  **ML Results** | Feature importance, 5-model AutoML comparison, SHAP summary |
+|  **Strategic Insights** | Context-aware ROI projections and prioritized recommendations via Llama 3 |
+|  **Executive Report** | One-click export in PDF, Excel, PPT, or HTML |
+|  **Dark / Light Mode** | Fully responsive, mobile-friendly UI |
+|  **Pipeline History** | View and revisit all past analyses |
+|  **Real-Time Updates** | WebSocket + polling for live agent progress |
 
 ---
 
@@ -73,11 +73,11 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 
 | Layer | Technology |
 |-------|-----------|
-| 🎨 **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui, Zustand, Recharts, Framer Motion |
-| ⚙️ **Backend** | FastAPI (async), SQLAlchemy 2.0, asyncpg, Pydantic v2, WebSockets |
-| 🗄️ **Database** | Supabase PostgreSQL 15 |
-| 🤖 **LLM** | Groq API — Llama 3 8B / 70B |
-| ☁️ **Hosting** | Render (frontend) + Railway (backend) + Supabase (database) |
+|  **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui, Zustand, Recharts, Framer Motion |
+|  **Backend** | FastAPI (async), SQLAlchemy 2.0, asyncpg, Pydantic v2, WebSockets |
+|  **Database** | Supabase PostgreSQL 15 |
+|  **LLM** | Groq API — Llama 3 8B / 70B |
+|  **Hosting** | Render (frontend) + Railway (backend) + Supabase (database) |
 
 </div>
 
@@ -117,10 +117,10 @@ Five specialized AI agents collaborate in real time, each handling a distinct la
 
 ### Prerequisites
 
-- 🟢 Node.js 18+
-- 🐍 Python 3.11+
-- 🐘 PostgreSQL 14+
-- 🔑 [Groq API Key](https://console.groq.com)
+-  Node.js 18+
+-  Python 3.11+
+-  PostgreSQL 14+
+-  [Groq API Key](https://console.groq.com)
 
 ---
 
@@ -320,8 +320,7 @@ Distributed under the **MIT License** — see [LICENSE](LICENSE) for details.
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:a855f7,100:6366f1&height=120&section=footer" width="100%"/>
 
-*Built by someone who builds things that break,*
-*and breaks things to build better ones..*
+*Built with 99% caffeine, 1% sheer delusion*
 
 **[Shivam Shukla](https://github.com/shivamim)**
 
