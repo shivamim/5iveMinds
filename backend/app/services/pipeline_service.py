@@ -21,6 +21,27 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ==========================================
+# 🛡️ JSON SERIALIZATION SILVER BULLET
+# Recursively converts numpy types to native Python types
+# ==========================================
+def convert_to_native_types(obj):
+    if isinstance(obj, dict):
+        return {k: convert_to_native_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_native_types(i) for i in obj]
+    elif isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    elif isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.str_,)):
+        return str(obj)
+    return obj
+
 class PipelineService:
     def __init__(self, db: AsyncSession): self.db = db
 
@@ -76,8 +97,11 @@ class PipelineService:
                         
                     agent_outputs[agent_name] = output
                     
+                    # 🛡️ CRITICAL FIX: Sanitize numpy types before saving to Postgres JSONB
+                    safe_output = convert_to_native_types(output)
+                    
                     await db.execute(update(AgentExecution).where(AgentExecution.id == exec_id).values(
-                        status=AgentStatus.COMPLETED, output_data=output, completed_at=datetime.utcnow(), execution_time_ms=1500, quality_score=99.0
+                        status=AgentStatus.COMPLETED, output_data=safe_output, completed_at=datetime.utcnow(), execution_time_ms=1500, quality_score=99.0
                     ))
                     await db.commit()
                     if ws_manager: await ws_manager.broadcast(str(run_id), {"agent": agent_name, "status": "completed"})
@@ -100,11 +124,8 @@ class PipelineService:
         total_missing = sum(missingness.values())
         total_cells = rows * len(cols) if cols else 1
         outliers = profile.get("outliers", {})
-        
-        # Calculate Duplicates
         duplicates = int(df.duplicated().sum()) if not df.empty else 0
         
-        # Calculate Data Quality Score (0-100)
         missing_penalty = min(30, (total_missing / total_cells * 100) * 3) if total_cells > 0 else 0
         outlier_penalty = min(20, (sum(outliers.values()) / max(rows, 1)) * 100)
         dup_penalty = min(20, (duplicates / max(rows, 1)) * 100)
@@ -125,7 +146,6 @@ class PipelineService:
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         numeric_df = df[numeric_cols].dropna()
         
-        # 1. Pearson Correlations
         real_correlations = []
         for i in range(len(numeric_cols)):
             for j in range(i+1, len(numeric_cols)):
@@ -134,27 +154,27 @@ class PipelineService:
                 if len(valid) > 2:
                     coeff, p_val = stats.pearsonr(valid[c1], valid[c2])
                     if not np.isnan(coeff):
-                        real_correlations.append({"var1": c1, "var2": c2, "coeff": round(float(coeff), 4), "p_value": float(p_val), "significant": p_val < 0.05})
+                        real_correlations.append({
+                            "var1": c1, "var2": c2, 
+                            "coeff": round(float(coeff), 4), 
+                            "p_value": float(p_val), 
+                            "significant": bool(p_val < 0.05) # Explicit native bool cast
+                        })
         real_correlations.sort(key=lambda x: abs(x["coeff"]), reverse=True)
         
-        # 2. Normality (Shapiro-Wilk) & Distribution Shape
         normality_tests = []
-        for col in numeric_cols[:10]: # Limit to 10 cols to prevent timeout
+        for col in numeric_cols[:10]:
             series = numeric_df[col].dropna()
             if len(series) < 3: continue
             sample = series.sample(min(5000, len(series)), random_state=42) if len(series) > 5000 else series
             try:
                 stat, p_val = stats.shapiro(sample)
                 normality_tests.append({
-                    "feature": col, 
-                    "shapiro_p": float(p_val), 
-                    "is_normal": p_val > 0.05,
-                    "skewness": round(float(stats.skew(sample)), 3),
-                    "kurtosis": round(float(stats.kurtosis(sample)), 3)
+                    "feature": col, "shapiro_p": float(p_val), "is_normal": bool(p_val > 0.05),
+                    "skewness": round(float(stats.skew(sample)), 3), "kurtosis": round(float(stats.kurtosis(sample)), 3)
                 })
             except: pass
             
-        # 3. Variance Inflation Factor (VIF) for Multicollinearity
         vif_data = []
         if len(numeric_cols) > 1 and len(numeric_df) > 10:
             X = numeric_df.values
@@ -164,23 +184,17 @@ class PipelineService:
                 try:
                     r2 = LinearRegression().fit(X_others, y).score(X_others, y)
                     vif = 1 / (1 - r2) if r2 < 0.9999 else 100.0
-                    vif_data.append({"feature": col, "vif": round(vif, 2)})
+                    vif_data.append({"feature": col, "vif": round(float(vif), 2)})
                 except: pass
             vif_data.sort(key=lambda x: x["vif"], reverse=True)
 
-        return {
-            "correlations": real_correlations[:10], 
-            "normality": normality_tests, 
-            "vif": vif_data[:10],
-            "total_numeric_features": len(numeric_cols)
-        }
+        return {"correlations": real_correlations[:10], "normality": normality_tests, "vif": vif_data[:10], "total_numeric_features": len(numeric_cols)}
 
     def _run_ml_engineer(self, sample_data: list) -> dict:
         if not sample_data: return {"error": "No data", "models_tested": [], "shap_values": []}
         df = pd.DataFrame(sample_data)
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         
-        # Auto-detect target
         target_col = None
         for col in numeric_cols:
             if df[col].nunique() == 2: target_col = col; break
@@ -219,7 +233,6 @@ class PipelineService:
             preds = model.predict(X_test)
             probs = model.predict_proba(X_test)[:, 1] if is_classification and hasattr(model, "predict_proba") else None
             
-            # Cross Validation (3-fold)
             try:
                 cv_scores = cross_val_score(model, X, y, cv=3, scoring='accuracy' if is_classification else 'r2')
                 cv_mean = float(np.mean(cv_scores))
@@ -229,28 +242,24 @@ class PipelineService:
             metrics = {"name": name, "cv_mean": cv_mean, "cv_std": cv_std, "time": time.time()-start}
             
             if is_classification:
-                metrics["accuracy"] = accuracy_score(y_test, preds)
-                metrics["precision"] = precision_score(y_test, preds, average='weighted', zero_division=0)
-                metrics["recall"] = recall_score(y_test, preds, average='weighted', zero_division=0)
-                metrics["f1_score"] = f1_score(y_test, preds, average='weighted', zero_division=0)
+                metrics["accuracy"] = float(accuracy_score(y_test, preds))
+                metrics["precision"] = float(precision_score(y_test, preds, average='weighted', zero_division=0))
+                metrics["recall"] = float(recall_score(y_test, preds, average='weighted', zero_division=0))
+                metrics["f1_score"] = float(f1_score(y_test, preds, average='weighted', zero_division=0))
                 if probs is not None:
-                    try: metrics["roc_auc"] = roc_auc_score(y_test, probs)
+                    try: metrics["roc_auc"] = float(roc_auc_score(y_test, probs))
                     except: metrics["roc_auc"] = 0.0
-                
-                # Confusion Matrix
                 cm = confusion_matrix(y_test, preds)
                 metrics["confusion_matrix"] = cm.tolist()
                 metrics["classes"] = le.classes_.tolist()
-                
                 score = metrics["accuracy"]
             else:
-                metrics["rmse"] = np.sqrt(mean_squared_error(y_test, preds))
-                metrics["mae"] = mean_absolute_error(y_test, preds)
-                metrics["r2_score"] = r2_score(y_test, preds)
-                # Adjusted R2
+                metrics["rmse"] = float(np.sqrt(mean_squared_error(y_test, preds)))
+                metrics["mae"] = float(mean_absolute_error(y_test, preds))
+                metrics["r2_score"] = float(r2_score(y_test, preds))
                 n = len(y_test)
                 p = X.shape[1]
-                metrics["adj_r2"] = 1 - (1 - metrics["r2_score"]) * (n - 1) / (n - p - 1) if n > p + 1 else metrics["r2_score"]
+                metrics["adj_r2"] = float(1 - (1 - metrics["r2_score"]) * (n - 1) / (n - p - 1)) if n > p + 1 else metrics["r2_score"]
                 score = metrics["r2_score"]
                 
             results.append(metrics)
@@ -262,7 +271,7 @@ class PipelineService:
         shap_values = sorted([{"feature": str(feat), "importance": float(imp)} for feat, imp in zip(X.columns, importances)], key=lambda x: x["importance"], reverse=True)[:10]
         
         return {
-            "target_column": target_col, "is_classification": is_classification, 
+            "target_column": target_col, "is_classification": bool(is_classification), 
             "models_tested": results, "shap_values": shap_values, 
             "best_model": results[0]["name"] if results[0].get("accuracy", results[0].get("r2_score", 0)) >= results[1].get("accuracy", results[1].get("r2_score", 0)) else results[1]["name"]
         }
@@ -300,9 +309,9 @@ High Multicollinearity (VIF > 5): {', '.join(high_vif) if high_vif else 'None'}.
 User Question: '{question}'
 
 Write a 3-paragraph executive summary.
-Paragraph 1: Data Quality & Integrity (mention duplicates, missingness, and quality score).
-Paragraph 2: Machine Learning Stability & Feature Drivers (mention CV variance and SHAP).
-Paragraph 3: Statistical Relationships (mention VIF and correlations) & Actionable Recommendations.
+Paragraph 1: Data Quality & Integrity.
+Paragraph 2: Machine Learning Stability & Feature Drivers.
+Paragraph 3: Statistical Relationships & Actionable Recommendations.
 Use markdown formatting."""
 
         groq_key = getattr(settings, 'GROQ_API_KEY', None)
