@@ -1,0 +1,9 @@
+services:
+  - type: static_site
+    name: fiveminds-frontend
+    runtime: node
+    buildCommand: npm install && npm run build
+    publishDir: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://your-backend.up.railway.app
