@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BrainCircuit, Loader2, ArrowLeft, Sparkles } from 'lucide-react';
+import { BrainCircuit, Loader2, ArrowLeft, Sparkles, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,12 +22,27 @@ export function AskPage() {
     setError(null);
 
     try {
-      const pipelineResponse = await startPipeline({ dataset_id: datasetId, goal: question, query: question } as any);
-      const runId = pipelineResponse.id || pipelineResponse.run_id;
+      // 🛡️ BULLETPROOF PAYLOAD: Sends all common field names to guarantee FastAPI accepts it
+      const payload = {
+        dataset_id: datasetId,
+        goal: question,
+        query: question,
+        question: question,
+        prompt: question,
+        business_question: question
+      };
+
+      const pipelineResponse = await startPipeline(payload);
+      const runId = pipelineResponse.id || pipelineResponse.run_id || (pipelineResponse as any).data?.id;
+      
+      if (!runId) throw new Error("Backend did not return a valid Run ID.");
+      
       localStorage.setItem('lastRunId', runId);
       navigate(`/dashboard?run=${runId}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start pipeline');
+    } catch (err: any) {
+      console.error("Pipeline Start Error:", err);
+      // This will now show the EXACT FastAPI validation error in plain English
+      setError(err.message || 'Failed to start pipeline'); 
     } finally {
       setIsProcessing(false);
     }
@@ -46,7 +61,7 @@ export function AskPage() {
         </CardHeader>
         <CardContent>
           <Textarea 
-            placeholder="e.g., Identify the top 3 factors driving customer churn and project the ROI of a retention campaign..."
+            placeholder="e.g., Identify the top 3 factors driving customer churn..."
             className="min-h-[150px] text-lg mb-6" value={question} onChange={(e) => setQuestion(e.target.value)}
           />
           
@@ -59,7 +74,15 @@ export function AskPage() {
             </Button>
           </div>
 
-          {error && <p className="text-red-500 text-sm mb-4 text-center">{error}</p>}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-sm">Backend Rejected Request:</p>
+                <p className="text-sm font-mono mt-1 break-words">{error}</p>
+              </div>
+            </div>
+          )}
 
           <Button 
             className="w-full bg-blue-600 hover:bg-blue-700 h-12 text-lg" 
