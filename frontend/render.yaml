@@ -10,4 +10,4 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://your-backend.up.railway.app
+        value: https://5iveminds-production.up.railway.app
