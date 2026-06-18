@@ -1,155 +1,106 @@
 import { useState, useEffect } from 'react';
-import { History, Trash2, Eye, RefreshCw } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { getPipelineHistory, deletePipelineRun } from '@/services/api';
-import type { PipelineRunResponse } from '@/types';
 import { useNavigate } from 'react-router-dom';
+import { History as HistoryIcon, Trash2, Play, Loader2, AlertCircle } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { getPipelineHistory, deletePipelineRun } from '@/services/api';
 
-export function HistoryPage() {
-  const [runs, setRuns] = useState<PipelineRunResponse[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function History() {
   const navigate = useNavigate();
-
-  const fetchHistory = async () => {
-    setLoading(true);
-    try {
-      const data = await getPipelineHistory(50, 0);
-      setRuns(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load history');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const data = await getPipelineHistory();
+        setHistory(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchHistory();
   }, []);
 
   const handleDelete = async (runId: string) => {
-    if (!confirm('Are you sure you want to delete this pipeline run?')) return;
-    try {
-      await deletePipelineRun(runId);
-      setRuns(runs.filter((r) => r.id !== runId));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed');
-    }
+    if (!confirm('Are you sure you want to delete this run?')) return;
+    await deletePipelineRun(runId);
+    setHistory(history.filter(h => (h.id || h.run_id) !== runId));
   };
 
   const handleView = (runId: string) => {
     localStorage.setItem('lastRunId', runId);
-    navigate(`/?run=${runId}`);
+    navigate(`/dashboard?run=${runId}`);
   };
 
-  const formatDate = (iso: string | null | undefined) => {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleString();
-  };
-
-  const formatDuration = (ms: number | null | undefined) => {
-    if (!ms) return '—';
-    if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
-  };
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        <p className="text-muted-foreground">Loading pipeline history...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">History</h1>
-          <p className="text-gray-500 mt-1">View and manage past pipeline runs</p>
+          <h1 className="text-4xl font-bold tracking-tight flex items-center gap-3">
+            <HistoryIcon className="w-8 h-8 text-blue-600" /> Pipeline History
+          </h1>
+          <p className="text-muted-foreground mt-2">Review and manage your past data analysis runs.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={fetchHistory} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
       </div>
 
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
-          {error}
+      {history.length === 0 ? (
+        <Card className="border-2 border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-20 text-center">
+            <AlertCircle className="w-16 h-16 text-muted-foreground mb-4" />
+            <h2 className="text-2xl font-bold mb-2">No History Yet</h2>
+            <p className="text-muted-foreground mb-6">Start a new analysis to see your pipeline runs here.</p>
+            <Button onClick={() => navigate('/')}>Start New Analysis</Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4">
+          {history.map((run) => {
+            const runId = run.id || run.run_id;
+            const status = run.status || 'unknown';
+            const date = run.created_at ? new Date(run.created_at).toLocaleString() : 'Unknown Date';
+            
+            return (
+              <Card key={runId} className="hover:shadow-lg transition-shadow">
+                <CardContent className="flex flex-col md:flex-row items-start md:items-center justify-between p-6 gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-lg font-semibold">Run: <span className="font-mono text-blue-600">{runId.substring(0, 8)}...</span></h3>
+                      <Badge variant={status === 'completed' ? 'default' : 'secondary'} className={status === 'completed' ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}>
+                        {status}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {run.goal || run.query || 'No business question recorded.'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">{date}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => handleView(runId)}>
+                      <Play className="w-4 h-4 mr-2" /> View Results
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => handleDelete(runId)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Pipeline Runs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {runs.length === 0 ? (
-            <div className="text-center py-12">
-              <History className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">No pipeline runs found.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Dataset</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Status</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Started</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Duration</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-500">Quality</th>
-                    <th className="text-right py-3 px-4 font-medium text-gray-500">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((run) => (
-                    <tr key={run.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4">
-                        <div>
-                          <p className="font-medium text-gray-900">{run.dataset_name}</p>
-                          <p className="text-xs text-gray-500 truncate max-w-[200px]">{run.business_question}</p>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Badge
-                          variant={
-                            run.status === 'completed'
-                              ? 'default'
-                              : run.status === 'failed'
-                              ? 'destructive'
-                              : 'secondary'
-                          }
-                          className="capitalize"
-                        >
-                          {run.status}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4 text-gray-600">{formatDate(run.started_at)}</td>
-                      <td className="py-3 px-4 text-gray-600">{formatDuration(run.total_time_ms)}</td>
-                      <td className="py-3 px-4">
-                        {run.quality_score_avg ? (
-                          <span className={`font-medium ${run.quality_score_avg >= 90 ? 'text-green-600' : run.quality_score_avg >= 70 ? 'text-amber-600' : 'text-red-600'}`}>
-                            {run.quality_score_avg.toFixed(1)}%
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button variant="ghost" size="sm" onClick={() => handleView(run.id)}>
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDelete(run.id)}>
-                            <Trash2 className="w-4 h-4 text-red-500" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
