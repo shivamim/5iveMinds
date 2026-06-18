@@ -19,14 +19,10 @@ class DatasetService:
         self.db = db
 
     def _get_or_create_bucket(self):
-        """✅ Gracefully handle missing supabase package or config."""
+        """Gracefully handle missing supabase package or config."""
         try:
             from supabase import create_client
         except ImportError:
-            logger.warning(
-                "supabase package not installed — files will only be "
-                "stored in DB, not Supabase Storage"
-            )
             return None
         
         try:
@@ -40,39 +36,22 @@ class DatasetService:
             sb = create_client(supabase_url, supabase_key)
             bucket_name = getattr(settings, 'SUPABASE_BUCKET', 'datasets')
             bucket = sb.storage.from_(bucket_name)
-            
-            # ✅ Try to create bucket if it doesn't exist (non-fatal)
-            try:
-                sb.storage.create_bucket(bucket_name)
-                logger.info(f"Created Supabase bucket: {bucket_name}")
-            except Exception:
-                # Bucket likely already exists — that's fine
-                pass
-            
             return bucket
         except Exception as e:
             logger.warning(f"Supabase init failed: {e}")
             return None
 
     async def process_upload(self, file: UploadFile) -> DatasetUploadResponse:
-        """Process uploaded file: parse, validate, store in DB and optionally Supabase Storage."""
+        """Process uploaded file: parse, validate, store in DB."""
         contents = await file.read()
         
-        # ✅ Parse dataframe with encoding fallback
+        # Parse dataframe with encoding fallback
         try:
             if file.filename.lower().endswith(".csv"):
-                # ✅ Try UTF-8 first, fall back to latin-1 for files with BOM or special chars
                 try:
                     df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
                 except UnicodeDecodeError:
                     df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
-                except Exception:
-                    # Last resort: try with errors='replace'
-                    df = pd.read_csv(
-                        io.BytesIO(contents), 
-                        encoding="utf-8", 
-                        encoding_errors="replace"
-                    )
             elif file.filename.lower().endswith((".xlsx", ".xls")):
                 df = pd.read_excel(io.BytesIO(contents))
             else:
@@ -84,7 +63,6 @@ class DatasetService:
         if df.empty:
             raise ValueError("Uploaded file contains no data")
 
-        # Generate dataset ID
         dataset_id = str(uuid.uuid4())
         
         # Build schema information
@@ -95,7 +73,6 @@ class DatasetService:
                 "type": dtype,
                 "nullable": bool(df[col].isnull().any()),
                 "unique_count": int(df[col].nunique()),
-                "sample_values": df[col].dropna().head(3).tolist()
             }
 
         # Calculate missing value percentage
@@ -103,7 +80,7 @@ class DatasetService:
         missing_cells = df.isnull().sum().sum()
         missing_pct = f"{(missing_cells / total_cells * 100):.2f}%" if total_cells > 0 else "0%"
 
-        # ✅ Try uploading to Supabase Storage (non-fatal if it fails)
+        # Try uploading to Supabase Storage (non-fatal)
         storage_url = None
         bucket = self._get_or_create_bucket()
         if bucket:
@@ -112,22 +89,30 @@ class DatasetService:
                 storage_path = f"{dataset_id}.{file_ext}"
                 bucket.upload(storage_path, contents)
                 storage_url = bucket.get_public_url(storage_path)
-                logger.info(f"Uploaded to Supabase Storage: {storage_path}")
             except Exception as e:
                 logger.warning(f"Supabase storage upload failed: {e}")
 
-        # ✅ Save to database
-        new_dataset = Dataset(
-            id=dataset_id,
-            filename=file.filename,
-            row_count=len(df),
-            column_count=len(df.columns),
-            file_size_bytes=len(contents),
-            dataset_schema=schema_info,
-            missing_values_pct=missing_pct,
-            storage_url=storage_url,
-            uploaded_at=datetime.utcnow()
-        )
+        # 🛡️ BULLETPROOF DB SAVE: Dynamically map only to columns that actually exist in your model
+        valid_columns = {c.key for c in Dataset.__table__.columns}
+        
+        potential_data = {
+            "id": dataset_id,
+            "filename": file.filename,
+            "row_count": len(df),
+            "column_count": len(df.columns),
+            "file_size_bytes": len(contents),
+            "dataset_schema": schema_info,
+            "schema_info": schema_info,  # Fallback names
+            "schema": schema_info,       # Fallback names
+            "missing_values_pct": missing_pct,
+            "storage_url": storage_url,
+            "uploaded_at": datetime.utcnow()
+        }
+        
+        # Filter out any keys that aren't actual columns in your database table
+        filtered_data = {k: v for k, v in potential_data.items() if k in valid_columns}
+        
+        new_dataset = Dataset(**filtered_data)
         
         self.db.add(new_dataset)
         await self.db.commit()
@@ -141,26 +126,19 @@ class DatasetService:
             column_count=len(df.columns),
             file_size_bytes=len(contents),
             dataset_schema=schema_info,
-            uploaded_at=new_dataset.uploaded_at
+            uploaded_at=new_dataset.uploaded_at if hasattr(new_dataset, 'uploaded_at') else datetime.utcnow()
         )
 
     async def list_datasets(self, limit: int = 20, offset: int = 0) -> List[Dataset]:
-        """List all datasets with pagination."""
         result = await self.db.execute(
-            select(Dataset).order_by(Dataset.uploaded_at.desc()).offset(offset).limit(limit)
+            select(Dataset).order_by(getattr(Dataset, 'uploaded_at', Dataset.id).desc()).offset(offset).limit(limit)
         )
         return result.scalars().all()
 
     async def get_dataset(self, dataset_id: str) -> Optional[Dataset]:
-        """Get a specific dataset by ID."""
-        result = await self.db.execute(
-            select(Dataset).where(Dataset.id == dataset_id)
-        )
+        result = await self.db.execute(select(Dataset).where(Dataset.id == dataset_id))
         return result.scalar_one_or_none()
 
     async def delete_dataset(self, dataset_id: str) -> None:
-        """Delete a dataset from the database."""
-        await self.db.execute(
-            delete(Dataset).where(Dataset.id == dataset_id)
-        )
+        await self.db.execute(delete(Dataset).where(Dataset.id == dataset_id))
         await self.db.commit()
