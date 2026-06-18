@@ -263,15 +263,44 @@ class PipelineService:
 
     def _run_designer(self, profile: dict, ml: dict, stats_res: dict) -> dict:
         charts = []
-        if ml.get("shap_values"):
-            charts.append({"chart_type": "bar_chart", "title": f"Feature Importance (Target: {ml.get('target_column')})", "chart_data": [{"name": s["feature"], "value": round(s["importance"] * 100, 2)} for s in ml["shap_values"]]})
-        if stats_res.get("vif"):
-            charts.append({"chart_type": "bar_chart", "title": "Multicollinearity (VIF) - >5 is High Risk", "chart_data": [{"name": v["feature"], "value": v["vif"]} for v in stats_res["vif"][:7]]})
         
-        # 🎨 PREMIUM CHARTS: Use Area Charts for distributions (looks 10x better than bar charts)
+        # 🎨 MIND-BLOWING CHART 1: The 80/20 Rule (Executives love this)
+        if ml.get("shap_values") and len(ml["shap_values"]) >= 3:
+            top_n = min(3, len(ml["shap_values"]))
+            top_sum = sum(s["importance"] for s in ml["shap_values"][:top_n])
+            rest_sum = max(0, 1.0 - top_sum)
+            top_feats_str = ", ".join([s["feature"] for s in ml["shap_values"][:top_n]])
+            
+            charts.append({
+                "chart_type": "pie_chart",
+                "title": f"🧠 The 80/20 Rule: Top Drivers vs Noise",
+                "chart_data": [
+                    {"name": f"Top {top_n} Drivers ({top_feats_str})", "value": round(top_sum * 100, 1)},
+                    {"name": "Remaining Features (Noise)", "value": round(rest_sum * 100, 1)}
+                ]
+            })
+            
+            # Horizontal bar for exact breakdown
+            charts.append({
+                "chart_type": "bar_chart", 
+                "title": f"🎯 Share of Influence: What Actually Moves the Needle", 
+                "chart_data": [{"name": s["feature"], "value": round(s["importance"] * 100, 2)} for s in ml["shap_values"][:7]]
+            })
+
+        # 🎨 MIND-BLOWING CHART 2: Statistically Significant Relationships
+        sig_corrs = [c for c in stats_res.get("correlations", []) if c.get("significant")][:5]
+        if sig_corrs:
+            charts.append({
+                "chart_type": "bar_chart",
+                "title": "🔗 Strongest Statistical Relationships (p < 0.05)",
+                "chart_data": [{"name": f"{c['var1']} ↔ {c['var2']}", "value": round(abs(c["coeff"]) * 100, 1)} for c in sig_corrs]
+            })
+
+        # Area charts for distributions
         for col, stats in list(profile.get("numeric_stats", {}).items())[:2]:
             if "histogram" in stats:
                 charts.append({"chart_type": "area_chart", "title": f"Distribution of {col}", "chart_data": [{"name": h["bin"], "value": h["count"]} for h in stats["histogram"]]})
+                
         return {"charts": charts}
 
     async def _run_strategist(self, question: str, rows: int, cols: list, outputs: dict) -> dict:
@@ -287,51 +316,60 @@ class PipelineService:
         best_model_data = next((m for m in ml.get("models_tested", []) if m["name"] == ml.get("best_model")), {})
         best_score = best_model_data.get("accuracy", best_model_data.get("r2_score", 0))
         
-        # 🧠 McKINSEY SENIOR PARTNER PROMPT
-        prompt = f"""You are a Senior Partner at McKinsey & Company and the Chief Strategy Officer for a Fortune 500 company.
-You are presenting a high-stakes strategic briefing to the Board of Directors.
+        # 🧠 THE "CHIEF DATA OFFICER" SYSTEM PROMPT
+        system_prompt = """You are the Chief Data Officer (CDO) of a Fortune 500 company, presenting directly to the CEO and Board of Directors. 
+You DO NOT speak like a data scientist. You NEVER use jargon like 'SHAP', 'VIF', 'R-squared', 'Pearson', 'Random Forest', or 'p-value'. 
+You translate complex predictive math into brutal, financially-focused business strategy. You speak in terms of revenue leakage, margin expansion, capital allocation, and operational leverage. 
+Your tone is authoritative, urgent, and brutally honest. You give actionable advice, not observations."""
 
-CONTEXT:
-- Dataset: {rows} rows, Quality Score: {de.get('quality_score', 'N/A')}/100.
-- Target Metric: {ml.get('target_column', 'Unknown')}.
-- Champion ML Model: {ml.get('best_model')} (Performance: {metric}: {best_score:.3f}).
-- Key Drivers (SHAP): {top_feats}.
-- Statistical Correlations: {top_corrs}.
-- Multicollinearity Risks (VIF > 5): {', '.join(high_vif) if high_vif else 'None'}.
-- Core Business Question: '{question}'
+        user_prompt = f"""THE DATA REALITY:
+- Core Business Question from CEO: "{question}"
+- Target Metric we are optimizing/predicting: "{ml.get('target_column', 'Unknown')}"
+- Predictive Confidence: {metric} of {best_score:.3f} (This means our engine explains {best_score*100:.1f}% of the real-world variance in this metric).
+- The "Needle Movers" (Top Causal Drivers): {top_feats}.
+- The "Hidden Relationships" (Strongest Correlations): {top_corrs}.
+- Data Integrity: Quality Score {de.get('quality_score')}/100. Redundant/Noisy processes (VIF > 5): {', '.join(high_vif) if high_vif else 'None'}.
 
-YOUR TASK:
-Do NOT just summarize the data. The board already has the data. They need STRATEGY.
-Write a highly persuasive, authoritative, and actionable Strategic Briefing. Use strong business vocabulary (e.g., 'strategic imperative', 'value leakage', 'margin expansion', 'capital allocation').
+YOUR MANDATE:
+Translate the math into brutal, actionable business truth. Structure your response EXACTLY as follows using Markdown:
 
-STRUCTURE YOUR RESPONSE EXACTLY LIKE THIS (Use Markdown):
+# 💰 The Bottom Line
+(2-3 sentences. Directly answer the CEO's question. State clearly whether the data shows we are winning or losing, and what the single biggest lever is to fix it.)
 
-# 🎯 Strategic Imperative
-(1 powerful paragraph defining the core business opportunity or threat based on the data and the user's question. Be bold and decisive.)
+# 🎯 The 3 "Needle Movers" (Root Cause Analysis)
+(Analyze the Top Causal Drivers. For each, explain HOW it impacts the Target Metric in plain English. Connect the dots.)
+1. **[Business Lever 1]:** [How it works] -> **Financial Impact:** [Estimate % impact on target metric]
+2. **[Business Lever 2]:** [How it works] -> **Financial Impact:** [Estimate % impact]
+3. **[Business Lever 3]:** [How it works] -> **Financial Impact:** [Estimate % impact]
 
-# 💡 High-Impact Recommendations
-(Provide 3 specific, actionable business initiatives. For each, estimate the potential ROI or impact based on the ML feature importance. Use bullet points.)
-1. **[Initiative Name]:** [Action to take] -> **Projected Impact:** [ROI/Metric improvement]
-2. ...
-3. ...
+# 🚨 The "Blind Spots" & Operational Risks
+(Analyze the Correlations and Redundancies. What is the data telling us that management is ignoring? Are we measuring the wrong things? Give a harsh, honest critique of current operations.)
 
-# ⚠️ Risk Mitigation & Blind Spots
-(Analyze the VIF, data quality, and statistical anomalies. What could go wrong if we ignore this data? What operational risks exist?)
-
-# 🚀 The 90-Day Execution Plan
-(A brief, punchy timeline of what the executive team should do in the next 30, 60, and 90 days to realize the ROI.)
+# 🚀 The 90-Day "War Room" Execution Plan
+- **Days 1-30 (Stop the Bleeding):** [Specific operational change to make immediately based on Lever 1]
+- **Days 31-60 (Optimize the Core):** [Specific process to re-engineer based on Lever 2]
+- **Days 61-90 (Scale the Win):** [How to productize or automate the insight from Lever 3]
 """
 
         groq_key = getattr(settings, 'GROQ_API_KEY', None)
         if groq_key and not groq_key.startswith("gsk_xxx"):
             try:
                 async with httpx.AsyncClient() as client:
-                    resp = await client.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": f"Bearer {groq_key}"}, json={"model": "llama3-70b-8192", "messages": [{"role": "user", "content": prompt}], "temperature": 0.7}, timeout=20.0)
+                    resp = await client.post("https://api.groq.com/openai/v1/chat/completions", 
+                        headers={"Authorization": f"Bearer {groq_key}"}, 
+                        json={
+                            "model": "llama3-70b-8192", 
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ], 
+                            "temperature": 0.7
+                        }, timeout=25.0)
                     if resp.status_code == 200: return {"report": resp.json()["choices"][0]["message"]["content"]}
             except Exception as e: logger.warning(f"Groq failed: {e}")
             
         # Fallback if Groq fails
-        return {"report": f"""# 🎯 STRATEGIC IMPERATIVE\nBased on the predictive modeling of `{ml.get('target_column')}`, the data indicates a critical leverage point in our operations. The champion model ({ml.get('best_model')}) achieves a {metric} of {best_score:.3f}, proving that we can reliably forecast and influence this metric.\n\n# 💡 HIGH-IMPACT RECOMMENDATIONS\n1. **Capital Reallocation:** Shift resources toward the top SHAP drivers ({top_feats}). These features dictate {best_score*100:.1f}% of the variance in our target metric.\n2. **Risk Mitigation:** Address the multicollinearity risks ({', '.join(high_vif) if high_vif else 'None identified'}). Operational redundancy in these areas is masking true performance drivers.\n3. **Process Optimization:** Target the outliers identified by the Data Engineer. Cleaning these anomalies will reduce model variance and improve operational throughput by an estimated 12-15%.\n\n# ⚠️ BLIND SPOTS & RISKS\nOur data quality score is {de.get('quality_score')}/100. If we do not address the missing data and distribution skewness (Shapiro-Wilk tests), our strategic forecasts will suffer from confidence degradation. \n\n# 🚀 90-DAY EXECUTION PLAN\n- **Days 1-30:** Deploy the {ml.get('best_model')} model into production for real-time scoring.\n- **Days 31-60:** Initiate A/B testing on the top 3 SHAP features to measure actual ROI uplift.\n- **Days 61-90:** Review statistical correlations and refine the feature engineering pipeline for V2."""}
+        return {"report": f"""# 💰 The Bottom Line\nBased on the predictive modeling of `{ml.get('target_column')}`, the data indicates a critical leverage point in our operations. The champion model achieves a confidence score of {best_score:.3f}, proving that we can reliably forecast and influence this metric.\n\n# 🎯 The 3 "Needle Movers"\n1. **Capital Reallocation:** Shift resources toward the top drivers ({top_feats}). These features dictate the majority of the variance in our target metric.\n2. **Risk Mitigation:** Address the redundancies ({', '.join(high_vif) if high_vif else 'None identified'}). Operational redundancy in these areas is masking true performance drivers.\n3. **Process Optimization:** Target the outliers identified by the Data Engineer. Cleaning these anomalies will reduce model variance and improve operational throughput by an estimated 12-15%.\n\n# 🚨 Blind Spots & Risks\nOur data quality score is {de.get('quality_score')}/100. If we do not address the missing data and distribution skewness, our strategic forecasts will suffer from confidence degradation.\n\n# 🚀 90-Day Execution Plan\n- **Days 1-30:** Deploy the predictive model into production for real-time scoring.\n- **Days 31-60:** Initiate A/B testing on the top 3 drivers to measure actual ROI uplift.\n- **Days 61-90:** Review statistical correlations and refine the feature engineering pipeline for V2."""}
 
     async def get_history(self, limit: int = 20, offset: int = 0) -> List[PipelineRun]:
         result = await self.db.execute(select(PipelineRun).order_by(PipelineRun.started_at.desc()).offset(offset).limit(limit))
