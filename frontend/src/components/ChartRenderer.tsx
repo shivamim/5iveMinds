@@ -7,11 +7,12 @@ export function ChartRenderer({ chart }: { chart: any }) {
 
   const data = chart.chart_data;
   const type = (chart.chart_type || 'bar').toLowerCase();
-  let normalizedData = Array.isArray(data) ? data : [];
   
-  if (normalizedData.length > 0 && typeof normalizedData[0] === 'object') {
+  // 🛡️ Filter out any null/undefined items to prevent Object.keys(null) crash
+  let normalizedData = Array.isArray(data) ? data.filter(Boolean) : [];
+  
+  if (normalizedData.length > 0 && typeof normalizedData[0] === 'object' && normalizedData[0] !== null) {
     const keys = Object.keys(normalizedData[0]);
-    // Smart detection of name/value keys (handles 'feature'/'importance', 'name'/'value', 'bin'/'count')
     const nameKey = keys.find(k => ['name', 'category', 'bin', 'label', 'x', 'feature', 'relationship'].includes(k.toLowerCase())) || keys[0];
     const valueKeys = keys.filter(k => k !== nameKey && typeof normalizedData[0][k] === 'number');
     const valueKey = valueKeys[0] || 'value';
