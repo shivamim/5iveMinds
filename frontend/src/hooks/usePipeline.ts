@@ -1,106 +1,69 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { PipelineStatusResponse, PipelineResults, AgentExecution, ChartItem } from '@/types';
+import { useState, useEffect, useCallback } from 'react';
 import { getPipelineStatus, getPipelineResults } from '@/services/api';
 
-interface UsePipelineOptions {
-  runId: string | null;
-  pollInterval?: number;
-  autoFetch?: boolean;
+// Helper to extract specific agent data from the backend response
+export function getAgentOutput(results: any, agentId: string) {
+  if (!results || !results.agent_outputs) return null;
+  
+  // Backend might return an array of executions or a dictionary
+  if (Array.isArray(results.agent_outputs)) {
+    const agent = results.agent_outputs.find(
+      (a: any) => a.agent_name === agentId || a.agent_id === agentId || a.name === agentId
+    );
+    return agent?.output || agent?.result || agent?.data || null;
+  }
+  
+  // Dictionary format
+  return results.agent_outputs[agentId] || results.agent_outputs[agentId.replace('_', '')] || null;
 }
 
-interface UsePipelineReturn {
-  status: PipelineStatusResponse | null;
-  results: PipelineResults | null;
-  loading: boolean;
-  error: string | null;
-  refresh: () => Promise<void>;
-  isComplete: boolean;
-}
-
-export function usePipeline({ runId, pollInterval = 3000, autoFetch = true }: UsePipelineOptions): UsePipelineReturn {
-  const [status, setStatus] = useState<PipelineStatusResponse | null>(null);
-  const [results, setResults] = useState<PipelineResults | null>(null);
-  const [loading, setLoading] = useState(false);
+export function usePipeline({ runId, pollInterval = 3000, autoFetch = true }: { 
+  runId: string | null, 
+  pollInterval?: number, 
+  autoFetch?: boolean 
+}) {
+  const [status, setStatus] = useState<any>(null);
+  const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isComplete, setIsComplete] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!runId) return;
     try {
-      setLoading(true);
-      setError(null);
       const statusData = await getPipelineStatus(runId);
       setStatus(statusData);
-
-      if (statusData.run.status === 'completed' || statusData.run.status === 'failed') {
-        const resultsData = await getPipelineResults(runId);
-        setResults(resultsData);
+      
+      // Map backend status strings to a boolean
+      const pipelineStatus = (statusData.status || statusData.pipeline_status || '').toLowerCase();
+      const terminalStates = ['completed', 'success', 'finished', 'failed', 'error', 'done'];
+      
+      if (terminalStates.includes(pipelineStatus)) {
+        setIsComplete(true);
+        if (['failed', 'error'].includes(pipelineStatus)) {
+          setError(statusData.error || statusData.message || 'Pipeline failed');
+        } else {
+          // Fetch final results once complete
+          const resultsData = await getPipelineResults(runId);
+          setResults(resultsData);
+        }
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch pipeline data');
-    } finally {
-      setLoading(false);
+    } catch (err: any) {
+      console.error("Pipeline fetch error:", err);
+      setError(err.message);
+      setIsComplete(true); // Stop polling on hard network error
     }
   }, [runId]);
 
   useEffect(() => {
-    if (!runId || !autoFetch) return;
-
-    fetchData();
-
-    intervalRef.current = setInterval(() => {
-      fetchData();
+    if (!autoFetch || !runId) return;
+    
+    fetchData(); // Initial fetch
+    const interval = setInterval(() => {
+      if (!isComplete) fetchData();
     }, pollInterval);
+    
+    return () => clearInterval(interval);
+  }, [runId, autoFetch, isComplete, fetchData, pollInterval]);
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [runId, autoFetch, pollInterval, fetchData]);
-
-  const refresh = useCallback(async () => {
-    await fetchData();
-  }, [fetchData]);
-
-  const isComplete = status?.run.status === 'completed' || status?.run.status === 'failed';
-
-  return { status, results, loading, error, refresh, isComplete };
-}
-
-export function getAgentOutput(
-  results: PipelineResults | null,
-  agentName: string
-): Record<string, any> | null {
-  if (!results?.executions) return null;
-  const output = results.executions[agentName];
-  if (!output || typeof output !== 'object') return null;
-  return output as Record<string, any>;
-}
-
-export function getAgentExecution(
-  status: PipelineStatusResponse | null,
-  agentName: string
-): AgentExecution | null {
-  if (!status?.executions) return null;
-  return status.executions.find(e => e.agent_name === agentName) || null;
-}
-
-export function getChartsByType(
-  results: PipelineResults | null,
-  chartType: string
-): Array<Record<string, any>> {
-  if (!results?.charts) return [];
-  return results.charts
-    .filter(c => c.chart_type === chartType)
-    .map(c => c.chart_data);
-}
-
-export function getChart(
-  results: PipelineResults | null,
-  chartType: string
-): ChartItem | null {
-  if (!results?.charts) return null;
-  const chart = results.charts.find(c => c.chart_type === chartType);
-  return chart || null;
+  return { status, results, error, isComplete, refetch: fetchData };
 }
