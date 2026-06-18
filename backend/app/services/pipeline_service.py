@@ -24,6 +24,10 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ==========================================
+# 🛡️ JSON SERIALIZATION SILVER BULLET
+# Recursively converts numpy types to native Python types
+# ==========================================
 def convert_to_native_types(obj):
     if isinstance(obj, dict): return {k: convert_to_native_types(v) for k, v in obj.items()}
     elif isinstance(obj, list): return [convert_to_native_types(i) for i in obj]
@@ -102,6 +106,9 @@ class PipelineService:
                 await db.execute(update(PipelineRun).where(PipelineRun.id == run_id).values(status=PipelineStatus.FAILED))
                 await db.commit()
 
+    # ==========================================
+    # 🧠 AGENT LOGIC
+    # ==========================================
     def _run_data_engineer(self, profile: dict, cols: list, rows: int, sample_data: list) -> dict:
         df = pd.DataFrame(sample_data) if sample_data else pd.DataFrame()
         missingness = profile.get("missingness", {})
@@ -125,7 +132,7 @@ class PipelineService:
         }
 
     def _run_statistician(self, sample_data: list, profile: dict) -> dict:
-        if not sample_data: return {"correlations": [], "normality": [], "vif": []}
+        if not sample_data: return {"correlations": [], "correlation_matrix": [], "normality": [], "vif": []}
         df = pd.DataFrame(sample_data)
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         
@@ -145,6 +152,19 @@ class PipelineService:
                     if not np.isnan(coeff):
                         real_correlations.append({"var1": c1, "var2": c2, "coeff": round(float(coeff), 4), "p_value": float(p_val), "significant": bool(p_val < 0.05)})
         real_correlations.sort(key=lambda x: abs(x["coeff"]), reverse=True)
+        
+        # 🛠️ BUILD TRUE 2D CORRELATION MATRIX
+        corr_matrix_data = []
+        features = list(numeric_cols[:10])
+        for i, f1 in enumerate(features):
+            row_values = []
+            for j, f2 in enumerate(features):
+                if i == j:
+                    row_values.append({"feature": f2, "coeff": 1.0})
+                else:
+                    c = next((c['coeff'] for c in real_correlations if (c['var1']==f1 and c['var2']==f2) or (c['var1']==f2 and c['var2']==f1)), 0.0)
+                    row_values.append({"feature": f2, "coeff": round(float(c), 2)})
+            corr_matrix_data.append({"feature": f1, "values": row_values})
         
         normality_tests = []
         for col in numeric_cols[:10]:
@@ -169,18 +189,32 @@ class PipelineService:
                 except: pass
             vif_data.sort(key=lambda x: x["vif"], reverse=True)
 
-        return {"correlations": real_correlations[:10], "normality": normality_tests, "vif": vif_data[:10], "total_numeric_features": len(numeric_cols)}
+        return {
+            "correlations": real_correlations[:10], 
+            "correlation_matrix": corr_matrix_data, 
+            "normality": normality_tests, 
+            "vif": vif_data[:10], 
+            "total_numeric_features": len(numeric_cols)
+        }
 
     def _run_ml_engineer(self, sample_data: list) -> dict:
-        if not sample_data: return {"error": "No data", "models_tested": [], "shap_values": []}
+        if not sample_data: return {"error": "No data", "models_tested": [], "shap_values": [], "target_reason": ""}
         df = pd.DataFrame(sample_data)
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         
+        # 🧠 SMART TARGET DETECTION WITH EXPLANATION
         target_col = None
+        target_reason = "Auto-selected as the primary prediction target."
+        
         for col in numeric_cols:
-            if df[col].nunique() == 2: target_col = col; break
-        if not target_col and len(numeric_cols) > 0: target_col = numeric_cols[-1]
-        if not target_col: return {"error": "No numeric target found", "models_tested": [], "shap_values": []}
+            if df[col].nunique() == 2: 
+                target_col = col
+                target_reason = f"Auto-detected: '{col}' contains exactly 2 unique values (Binary Classification/Churn)."
+                break
+        if not target_col and len(numeric_cols) > 0: 
+            target_col = numeric_cols[-1]
+            target_reason = f"Auto-detected: '{target_col}' selected as the final numeric column (Regression Target)."
+        if not target_col: return {"error": "No numeric target found", "models_tested": [], "shap_values": [], "target_reason": ""}
 
         X = df.drop(columns=[target_col])
         y = df[target_col]
@@ -256,15 +290,30 @@ class PipelineService:
         shap_values = sorted([{"feature": str(feat), "importance": float(imp)} for feat, imp in zip(X.columns, importances)], key=lambda x: x["importance"], reverse=True)[:10]
         
         return {
-            "target_column": target_col, "is_classification": bool(is_classification), 
-            "models_tested": results, "shap_values": shap_values, 
+            "target_column": target_col, 
+            "target_reason": target_reason,
+            "is_classification": bool(is_classification), 
+            "models_tested": results, 
+            "shap_values": shap_values, 
             "best_model": results[0]["name"] if results[0].get("accuracy", results[0].get("r2_score", 0)) >= results[1].get("accuracy", results[1].get("r2_score", 0)) else results[1]["name"]
         }
 
     def _run_designer(self, profile: dict, ml: dict, stats_res: dict) -> dict:
         charts = []
         
-        # 🎨 MIND-BLOWING CHART 1: The 80/20 Rule (Executives love this)
+        # 🛠️ FORCE CATEGORICAL PIE CHART
+        categorical_stats = profile.get("categorical_stats", {})
+        if categorical_stats:
+            for col, dist in categorical_stats.items():
+                if 2 <= len(dist) <= 8:
+                    charts.append({
+                        "chart_type": "pie_chart",
+                        "title": f"📊 Demographic Split: {col}",
+                        "chart_data": [{"name": str(d["category"]), "value": int(d["count"])} for d in dist]
+                    })
+                    break
+        
+        # 80/20 Rule Chart
         if ml.get("shap_values") and len(ml["shap_values"]) >= 3:
             top_n = min(3, len(ml["shap_values"]))
             top_sum = sum(s["importance"] for s in ml["shap_values"][:top_n])
@@ -280,14 +329,12 @@ class PipelineService:
                 ]
             })
             
-            # Horizontal bar for exact breakdown
             charts.append({
                 "chart_type": "bar_chart", 
                 "title": f"🎯 Share of Influence: What Actually Moves the Needle", 
                 "chart_data": [{"name": s["feature"], "value": round(s["importance"] * 100, 2)} for s in ml["shap_values"][:7]]
             })
 
-        # 🎨 MIND-BLOWING CHART 2: Statistically Significant Relationships
         sig_corrs = [c for c in stats_res.get("correlations", []) if c.get("significant")][:5]
         if sig_corrs:
             charts.append({
@@ -296,7 +343,6 @@ class PipelineService:
                 "chart_data": [{"name": f"{c['var1']} ↔ {c['var2']}", "value": round(abs(c["coeff"]) * 100, 1)} for c in sig_corrs]
             })
 
-        # Area charts for distributions
         for col, stats in list(profile.get("numeric_stats", {}).items())[:2]:
             if "histogram" in stats:
                 charts.append({"chart_type": "area_chart", "title": f"Distribution of {col}", "chart_data": [{"name": h["bin"], "value": h["count"]} for h in stats["histogram"]]})
@@ -316,7 +362,6 @@ class PipelineService:
         best_model_data = next((m for m in ml.get("models_tested", []) if m["name"] == ml.get("best_model")), {})
         best_score = best_model_data.get("accuracy", best_model_data.get("r2_score", 0))
         
-        # 🧠 THE "CHIEF DATA OFFICER" SYSTEM PROMPT
         system_prompt = """You are the Chief Data Officer (CDO) of a Fortune 500 company, presenting directly to the CEO and Board of Directors. 
 You DO NOT speak like a data scientist. You NEVER use jargon like 'SHAP', 'VIF', 'R-squared', 'Pearson', 'Random Forest', or 'p-value'. 
 You translate complex predictive math into brutal, financially-focused business strategy. You speak in terms of revenue leakage, margin expansion, capital allocation, and operational leverage. 
@@ -351,6 +396,7 @@ Translate the math into brutal, actionable business truth. Structure your respon
 - **Days 61-90 (Scale the Win):** [How to productize or automate the insight from Lever 3]
 """
 
+        # 🧠 GROQ API CALL: Using the absolute smartest model (Llama 3.3 70B)
         groq_key = getattr(settings, 'GROQ_API_KEY', None)
         if groq_key and not groq_key.startswith("gsk_xxx"):
             try:
@@ -358,19 +404,27 @@ Translate the math into brutal, actionable business truth. Structure your respon
                     resp = await client.post("https://api.groq.com/openai/v1/chat/completions", 
                         headers={"Authorization": f"Bearer {groq_key}"}, 
                         json={
-                            "model": "llama3-70b-8192", 
+                            "model": "llama-3.3-70b-versatile", 
                             "messages": [
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_prompt}
                             ], 
                             "temperature": 0.7
                         }, timeout=25.0)
-                    if resp.status_code == 200: return {"report": resp.json()["choices"][0]["message"]["content"]}
-            except Exception as e: logger.warning(f"Groq failed: {e}")
+                    
+                    if resp.status_code == 200: 
+                        return {"report": resp.json()["choices"][0]["message"]["content"]}
+                    else:
+                        logger.warning(f"Groq returned status {resp.status_code}: {resp.text}")
+            except Exception as e: 
+                logger.warning(f"Groq API call failed: {e}")
             
         # Fallback if Groq fails
         return {"report": f"""# 💰 The Bottom Line\nBased on the predictive modeling of `{ml.get('target_column')}`, the data indicates a critical leverage point in our operations. The champion model achieves a confidence score of {best_score:.3f}, proving that we can reliably forecast and influence this metric.\n\n# 🎯 The 3 "Needle Movers"\n1. **Capital Reallocation:** Shift resources toward the top drivers ({top_feats}). These features dictate the majority of the variance in our target metric.\n2. **Risk Mitigation:** Address the redundancies ({', '.join(high_vif) if high_vif else 'None identified'}). Operational redundancy in these areas is masking true performance drivers.\n3. **Process Optimization:** Target the outliers identified by the Data Engineer. Cleaning these anomalies will reduce model variance and improve operational throughput by an estimated 12-15%.\n\n# 🚨 Blind Spots & Risks\nOur data quality score is {de.get('quality_score')}/100. If we do not address the missing data and distribution skewness, our strategic forecasts will suffer from confidence degradation.\n\n# 🚀 90-Day Execution Plan\n- **Days 1-30:** Deploy the predictive model into production for real-time scoring.\n- **Days 31-60:** Initiate A/B testing on the top 3 drivers to measure actual ROI uplift.\n- **Days 61-90:** Review statistical correlations and refine the feature engineering pipeline for V2."""}
 
+    # ==========================================
+    # 🛡️ DB FETCHERS (CRASH-PROOF)
+    # ==========================================
     async def get_history(self, limit: int = 20, offset: int = 0) -> List[PipelineRun]:
         result = await self.db.execute(select(PipelineRun).order_by(PipelineRun.started_at.desc()).offset(offset).limit(limit))
         return result.scalars().all()
