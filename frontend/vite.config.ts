@@ -1,4 +1,4 @@
-\import { defineConfig } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
@@ -11,7 +11,7 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 1000,
-    // ✅ Force unique hashed filenames on every build to prevent browser caching of stale JS
+    // Force unique hashed filenames on every build to prevent browser caching of stale JS
     rollupOptions: {
       output: {
         chunkFileNames: 'assets/[name]-[hash].js',
