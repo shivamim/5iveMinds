@@ -11,11 +11,13 @@ export function ChartRenderer({ chart }: { chart: any }) {
   
   if (normalizedData.length > 0 && typeof normalizedData[0] === 'object') {
     const keys = Object.keys(normalizedData[0]);
-    const nameKey = keys.find(k => ['name', 'category', 'bin', 'label', 'x'].includes(k.toLowerCase())) || keys[0];
+    // Smart detection of name/value keys (handles 'feature'/'importance', 'name'/'value', 'bin'/'count')
+    const nameKey = keys.find(k => ['name', 'category', 'bin', 'label', 'x', 'feature', 'relationship'].includes(k.toLowerCase())) || keys[0];
     const valueKeys = keys.filter(k => k !== nameKey && typeof normalizedData[0][k] === 'number');
+    const valueKey = valueKeys[0] || 'value';
 
     if (type.includes('pie')) {
-      const pieData = normalizedData.map(d => ({ name: d[nameKey], value: d[valueKeys[0]] || d.value || 0 }));
+      const pieData = normalizedData.map(d => ({ name: d[nameKey], value: d[valueKey] || d.value || 0 }));
       return (
         <ResponsiveContainer width="100%" height={300}>
           <PieChart>
@@ -30,14 +32,21 @@ export function ChartRenderer({ chart }: { chart: any }) {
 
     return (
       <ResponsiveContainer width="100%" height={300}>
-        <BarChart data={normalizedData}>
+        <BarChart data={normalizedData} layout={normalizedData.length > 5 && nameKey === 'feature' ? "vertical" : "horizontal"}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey={nameKey} tick={{ fontSize: 12 }} />
-          <YAxis tick={{ fontSize: 12 }} />
+          {normalizedData.length > 5 && nameKey === 'feature' ? (
+            <>
+              <XAxis type="number" tick={{ fontSize: 12 }} />
+              <YAxis dataKey={nameKey} type="category" tick={{ fontSize: 12 }} width={100} />
+            </>
+          ) : (
+            <>
+              <XAxis dataKey={nameKey} tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
+            </>
+          )}
           <Tooltip /><Legend />
-          {valueKeys.map((key, idx) => (
-            <Bar key={key} dataKey={key} fill={COLORS[idx % COLORS.length]} radius={[4, 4, 0, 0]} />
-          ))}
+          <Bar dataKey={valueKey} fill={COLORS[0]} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     );
