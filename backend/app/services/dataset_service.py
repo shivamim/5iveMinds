@@ -41,13 +41,10 @@ class DatasetService:
             profile["categorical_stats"][col] = [{"category": str(k), "count": int(v)} for k, v in counts.items()]
             profile["missingness"][col] = int(df[col].isnull().sum())
             
-        if len(numeric_cols) > 1:
-            corr = df[numeric_cols].corr()
-            for i in range(len(numeric_cols)):
-                for j in range(i+1, len(numeric_cols)):
-                    val = corr.iloc[i, j]
-                    if not np.isnan(val):
-                        profile["correlations"].append({"var1": numeric_cols[i], "var2": numeric_cols[j], "coeff": round(float(val), 3)})
+        # 🧠 CAPTURE RAW SAMPLE DATA FOR REAL ML TRAINING
+        # Replace NaN with None so it serializes to JSON safely
+        profile["sample_data"] = df.head(1000).replace({np.nan: None}).to_dict(orient="records")
+        
         return profile
 
     async def process_upload(self, file: UploadFile) -> DatasetUploadResponse:
