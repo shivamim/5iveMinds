@@ -1,151 +1,75 @@
-import { useState } from 'react';
-import { Settings, Key, Globe, Bell, Shield } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Settings as SettingsIcon, Database, Server, BrainCircuit, CheckCircle2 } from 'lucide-react';
 
-export function SettingsPage() {
-  const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || 'http://localhost:8000');
-  const [notifications, setNotifications] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
-
-  const handleSave = () => {
-    localStorage.setItem('apiUrl', apiUrl);
-    alert('Settings saved successfully');
-  };
+export function Settings() {
+  const apiUrl = import.meta.env.VITE_API_URL || 'https://your-backend.up.railway.app';
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-500 mt-1">Configure your FiveMinds experience</p>
+    <div className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold tracking-tight flex items-center gap-3">
+          <SettingsIcon className="w-8 h-8 text-blue-600" /> System Settings
+        </h1>
+        <p className="text-muted-foreground mt-2">Configuration and environment status for your FiveMinds platform.</p>
       </div>
 
-      <Tabs defaultValue="general" className="space-y-4">
-        <TabsList className="bg-gray-100">
-          <TabsTrigger value="general" className="data-[state=active]:bg-white">
-            <Settings className="w-4 h-4 mr-1" /> General
-          </TabsTrigger>
-          <TabsTrigger value="api" className="data-[state=active]:bg-white">
-            <Key className="w-4 h-4 mr-1" /> API
-          </TabsTrigger>
-          <TabsTrigger value="notifications" className="data-[state=active]:bg-white">
-            <Bell className="w-4 h-4 mr-1" /> Notifications
-          </TabsTrigger>
-        </TabsList>
-
-        {/* General Tab */}
-        <TabsContent value="general">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">General Settings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Dark Mode</Label>
-                  <p className="text-sm text-gray-500">Enable dark theme for the interface</p>
-                </div>
-                <Switch checked={darkMode} onCheckedChange={setDarkMode} />
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Server className="w-5 h-5" /> API Configuration</CardTitle>
+            <CardDescription>Connection details for the backend orchestrator.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Backend API URL</p>
+                <p className="font-mono text-sm">{apiUrl}</p>
               </div>
+              <Badge className="bg-green-100 text-green-800 hover:bg-green-100 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> Connected
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
 
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Auto Refresh</Label>
-                  <p className="text-sm text-gray-500">Automatically refresh pipeline data</p>
-                </div>
-                <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Database className="w-5 h-5" /> Database Status</CardTitle>
+            <CardDescription>Supabase PostgreSQL connection pooler status.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Connection Mode</p>
+                <p className="font-mono text-sm">Session Mode (Port 5432)</p>
               </div>
+              <Badge className="bg-green-100 text-green-800 hover:bg-green-100 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> Optimal
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
 
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Language</Label>
-                  <p className="text-sm text-gray-500">Interface language</p>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-lg">
-                  <Globe className="w-4 h-4" />
-                  English
-                </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><BrainCircuit className="w-5 h-5" /> AI Models</CardTitle>
+            <CardDescription>Active LLM configurations for the 5-agent pipeline.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 bg-muted rounded-lg">
+                <p className="text-sm font-medium text-muted-foreground">Strategist & Data Engineer</p>
+                <p className="font-semibold">Llama 3 70B (via Groq)</p>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* API Tab */}
-        <TabsContent value="api">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <Shield className="w-4 h-4" />
-                API Configuration
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="api-url">Backend API URL</Label>
-                <Input
-                  id="api-url"
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  placeholder="http://localhost:8000"
-                />
-                <p className="text-xs text-gray-500">The URL of your FiveMinds backend API</p>
+              <div className="p-4 bg-muted rounded-lg">
+                <p className="text-sm font-medium text-muted-foreground">Statistician & ML Engineer</p>
+                <p className="font-semibold">Llama 3 8B (via Groq)</p>
               </div>
-
-              <Button onClick={handleSave}>Save Configuration</Button>
-
-              <div className="bg-gray-50 rounded-lg p-4 mt-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-2">API Status</h4>
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-3 w-3">
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
-                  </span>
-                  <span className="text-sm text-gray-600">Connected to {apiUrl}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Notifications Tab */}
-        <TabsContent value="notifications">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">Notification Preferences</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Pipeline Notifications</Label>
-                  <p className="text-sm text-gray-500">Get notified when pipelines complete or fail</p>
-                </div>
-                <Switch checked={notifications} onCheckedChange={setNotifications} />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Agent Progress Updates</Label>
-                  <p className="text-sm text-gray-500">Real-time updates as agents complete</p>
-                </div>
-                <Switch checked={notifications} onCheckedChange={setNotifications} />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Weekly Digest</Label>
-                  <p className="text-sm text-gray-500">Summary of all pipeline runs</p>
-                </div>
-                <Switch />
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
