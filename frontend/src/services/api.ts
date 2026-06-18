@@ -1,25 +1,9 @@
 import type { PipelineRunCreate, PipelineRunResponse, PipelineStatusResponse, PipelineResults, DatasetUploadResponse } from '@/types';
 
-// ✅ FIXED: Normalize URL — strip trailing slash, ensure https:// prefix
-function normalizeBaseUrl(url: string): string {
-  if (!url) return '';
-  let u = url.trim();
-  // Add https:// if missing (prevents relative-URL bug)
-  if (!u.startsWith('http://') && !u.startsWith('https://')) {
-    u = 'https://' + u;
-  }
-  // Strip trailing slash
-  if (u.endsWith('/')) u = u.slice(0, -1);
-  return u;
-}
-
-const BASE_URL = normalizeBaseUrl(
-  import.meta.env.VITE_API_URL || 'https://5iveminds-production.up.railway.app'
-);
-// ✅ Avoid double /api/v1 if user already included it in env
+const BASE_URL = import.meta.env.VITE_API_URL || 'https://5iveminds-production.up.railway.app';
 const API_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL : `${BASE_URL}/api/v1`;
 
-// ✅ DEBUG: Log once so you can verify in browser console
+// DEBUG: Log once so you can verify in browser console
 console.log('[FiveMinds] API_BASE =', API_BASE);
 
 async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -34,7 +18,6 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
   try {
     response = await fetch(`${API_BASE}${url}`, { ...options, headers });
   } catch (networkErr: any) {
-    // ✅ Network/CORS/DNS errors land here — never reach .json()
     throw new Error(
       `Network error reaching backend at ${API_BASE}${url}. ` +
       `Check internet connection, CORS, or backend deployment status. ` +
@@ -42,7 +25,6 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
     );
   }
 
-  // ✅ Always read body as text first — never call response.json() directly
   let rawText = '';
   try {
     rawText = await response.text();
@@ -59,7 +41,6 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
       try {
         const parsed = JSON.parse(rawText);
         errorMessage = parsed.detail || parsed.message || parsed.error || rawText;
-        // FastAPI 422 detail is an array — extract first message
         if (Array.isArray(parsed.detail) && parsed.detail.length > 0) {
           const first = parsed.detail[0];
           errorMessage = `Validation error: ${first.msg || JSON.stringify(first)}`;
@@ -71,7 +52,6 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
     throw new Error(errorMessage);
   }
 
-  // ✅ Empty body → return empty object/array based on expected type
   if (!rawText || rawText.trim() === '') return {} as T;
   try {
     return JSON.parse(rawText) as T;
@@ -92,7 +72,6 @@ export async function getPipelineResults(runId: string): Promise<PipelineResults
   return fetchWithAuth(`/pipeline/${runId}/results`);
 }
 
-// ✅ FIXED: Bulletproof upload — handles ALL edge cases
 export async function uploadDataset(file: File): Promise<DatasetUploadResponse> {
   if (!file) throw new Error('No file provided');
   if (file.size === 0) throw new Error('File is empty (0 bytes). Please select a valid CSV/XLSX file.');
@@ -107,7 +86,6 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
     response = await fetch(`${API_BASE}/datasets/upload`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-      // ✅ NEVER set Content-Type for FormData — browser sets boundary automatically
       body: formData,
     });
   } catch (networkError: any) {
@@ -117,7 +95,6 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
     );
   }
 
-  // ✅ Read body as text — never call response.json() (causes "Unexpected end of JSON input")
   let rawText = '';
   try {
     rawText = await response.text();
@@ -130,7 +107,6 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
     if (rawText) {
       try {
         const parsedError = JSON.parse(rawText);
-        // FastAPI 422 detail array
         if (Array.isArray(parsedError.detail) && parsedError.detail.length > 0) {
           errorMessage = `Validation: ${parsedError.detail[0].msg}`;
         } else {
@@ -146,15 +122,12 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
     throw new Error(errorMessage);
   }
 
-  // ✅ Empty 200 response — backend succeeded but returned nothing (shouldn't happen, but safe)
   if (!rawText || rawText.trim() === '') {
     throw new Error('Upload succeeded but backend returned empty response. Check backend logs.');
   }
 
-  // ✅ Parse JSON safely
   try {
     const parsed = JSON.parse(rawText);
-    // ✅ Ensure required fields exist
     if (!parsed.id && !parsed.dataset_id) {
       throw new Error('Backend response missing dataset ID');
     }
@@ -169,7 +142,6 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
   }
 }
 
-// ✅ FIXED: History endpoint now matches backend route
 export async function getPipelineHistory(): Promise<any[]> {
   try {
     const res = await fetchWithAuth<any>('/pipeline/history');
@@ -186,7 +158,6 @@ export async function deletePipelineRun(runId: string): Promise<void> {
   }
 }
 
-// ✅ FIXED: Report endpoint now matches backend route
 export async function generateReport(runId: string, format: string): Promise<any> {
   return fetchWithAuth(`/reports/${runId}/export`, {
     method: 'POST',
@@ -200,7 +171,34 @@ export async function getDatasets(): Promise<any[]> {
     return Array.isArray(res) ? res : (res.data || []);
   } catch (e) { return []; }
 }
+
 export async function login(data: any): Promise<any> { return fetchWithAuth('/auth/login', { method: 'POST', body: JSON.stringify(data) }).catch(() => ({})); }
 export async function register(data: any): Promise<any> { return fetchWithAuth('/auth/register', { method: 'POST', body: JSON.stringify(data) }).catch(() => ({})); }
 export async function getUserProfile(): Promise<any> { return fetchWithAuth('/auth/me').catch(() => ({})); }
 export async function getAgentInfo(): Promise<any> { return []; }
+
+// ==========================================
+// 📄 PDF EXPORT FUNCTION (Fixes the current build crash)
+// ==========================================
+export async function downloadPdfReport(runId: string): Promise<void> {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/reports/${runId}/pdf`, {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Failed to download PDF: ${response.status} - ${errorText}`);
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `FiveMinds_Report_${runId.substring(0, 8)}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
