@@ -52,7 +52,9 @@ export function History() {
           <h1 className="text-4xl font-bold tracking-tight flex items-center gap-3">
             <HistoryIcon className="w-8 h-8 text-blue-600" /> Pipeline History
           </h1>
-          <p className="text-muted-foreground mt-2">Review and manage your past data analysis runs.</p>
+          <p className="text-muted-foreground mt-2">
+            Review and manage your past data analysis runs.
+          </p>
         </div>
       </div>
 
@@ -61,7 +63,9 @@ export function History() {
           <CardContent className="flex flex-col items-center justify-center py-20 text-center">
             <AlertCircle className="w-16 h-16 text-muted-foreground mb-4" />
             <h2 className="text-2xl font-bold mb-2">No History Yet</h2>
-            <p className="text-muted-foreground mb-6">Start a new analysis to see your pipeline runs here.</p>
+            <p className="text-muted-foreground mb-6">
+              Start a new analysis to see your pipeline runs here.
+            </p>
             <Button onClick={() => navigate('/')}>Start New Analysis</Button>
           </CardContent>
         </Card>
@@ -70,20 +74,29 @@ export function History() {
           {history.map((run) => {
             const runId = run.id || run.run_id;
             const status = run.status || 'unknown';
-            const date = run.created_at ? new Date(run.created_at).toLocaleString() : 'Unknown Date';
+            // ✅ FIXED: Use backend field names (started_at, business_question)
+            const date = (run.started_at || run.created_at) 
+              ? new Date(run.started_at || run.created_at).toLocaleString() 
+              : 'Unknown Date';
             
             return (
               <Card key={runId} className="hover:shadow-lg transition-shadow">
                 <CardContent className="flex flex-col md:flex-row items-start md:items-center justify-between p-6 gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-semibold">Run: <span className="font-mono text-blue-600">{runId.substring(0, 8)}...</span></h3>
-                      <Badge variant={status === 'completed' ? 'default' : 'secondary'} className={status === 'completed' ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}>
+                      <h3 className="text-lg font-semibold">
+                        Run: <span className="font-mono text-blue-600">{runId.substring(0, 8)}...</span>
+                      </h3>
+                      <Badge 
+                        variant={status === 'completed' ? 'default' : 'secondary'} 
+                        className={status === 'completed' ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}
+                      >
                         {status}
                       </Badge>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      {run.goal || run.query || 'No business question recorded.'}
+                      {/* ✅ FIXED: backend stores business_question */}
+                      {run.business_question || run.goal || run.query || 'No business question recorded.'}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">{date}</p>
                   </div>
