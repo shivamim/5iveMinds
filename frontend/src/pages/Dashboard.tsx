@@ -37,6 +37,14 @@ export function Dashboard() {
     }
   };
 
+  // 🛡️ CRITICAL FIX: Kills the infinite spinner if pipeline finishes but data is missing
+  const renderTab = (agentOutput: any, content: React.ReactNode) => {
+    if (error) return <div className="p-8 text-center text-red-500 bg-red-50 rounded-lg border border-red-200">Pipeline Failed: {error}</div>;
+    if (!agentOutput && !isComplete) return <LoadingState />;
+    if (!agentOutput && isComplete) return <div className="p-8 text-center text-muted-foreground bg-muted rounded-lg border-2 border-dashed">No data generated for this section.</div>;
+    return content;
+  };
+
   if (!runId) return <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6"><AlertCircle className="w-16 h-16 text-muted-foreground" /><h2 className="text-2xl font-bold">No Active Analysis</h2><button onClick={() => navigate('/')} className="bg-blue-600 text-white px-6 py-2 rounded-lg">Return Home</button></div>;
 
   const agents = [
@@ -111,9 +119,8 @@ export function Dashboard() {
             <TabsTrigger value="health" className="rounded-lg"><ShieldCheck className="w-4 h-4 mr-2" /> Data Health</TabsTrigger>
           </TabsList>
 
-          {/* STRATEGY TAB */}
           <TabsContent value="strategy">
-            {!strategist ? <LoadingState /> : (
+            {renderTab(strategist, (
               <Card className="border-2 shadow-lg">
                 <CardHeader><CardTitle className="flex items-center gap-2 text-2xl"><FileText className="w-6 h-6 text-blue-600" /> Executive Strategy Report</CardTitle></CardHeader>
                 <CardContent>
@@ -122,12 +129,11 @@ export function Dashboard() {
                   </ScrollArea>
                 </CardContent>
               </Card>
-            )}
+            ))}
           </TabsContent>
 
-          {/* ML ARENA TAB */}
           <TabsContent value="ml">
-            {!ml ? <LoadingState /> : ml.error ? <p className="text-red-500 p-8 text-center">ML Error: {ml.error}</p> : (
+            {renderTab(ml, (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <Card className="border-2 shadow-lg">
@@ -168,12 +174,11 @@ export function Dashboard() {
                   </Card>
                 </div>
 
-                {/* Confusion Matrix */}
                 {bestModel?.confusion_matrix && (
                   <Card className="border-2 shadow-lg">
                     <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-orange-600" /> Confusion Matrix ({bestModel.name})</CardTitle></CardHeader>
                     <CardContent>
-                      <div className="flex justify-center">
+                      <div className="flex justify-center overflow-x-auto">
                         <table className="border-collapse">
                           <thead>
                             <tr>
@@ -199,17 +204,16 @@ export function Dashboard() {
                   </Card>
                 )}
               </div>
-            )}
+            ))}
           </TabsContent>
 
-          {/* DEEP STATS TAB */}
           <TabsContent value="stats">
-            {!stats ? <LoadingState /> : (
+            {renderTab(stats, (
               <div className="space-y-6">
                 <Card className="border-2 shadow-lg">
                   <CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-red-600" /> Multicollinearity (VIF)</CardTitle></CardHeader>
                   <CardContent>
-                    <p className="text-sm text-muted-foreground mb-4">Variance Inflation Factor. Values &gt; 5 indicate high multicollinearity (features are highly correlated with each other, which can destabilize linear models).</p>
+                    <p className="text-sm text-muted-foreground mb-4">Variance Inflation Factor. Values &gt; 5 indicate high multicollinearity.</p>
                     <ChartRenderer chart={{chart_type: 'bar_chart', chart_data: stats.vif}} />
                   </CardContent>
                 </Card>
@@ -267,12 +271,11 @@ export function Dashboard() {
                   </Card>
                 </div>
               </div>
-            )}
+            ))}
           </TabsContent>
 
-          {/* DATA HEALTH TAB */}
           <TabsContent value="health">
-            {!dataEng ? <LoadingState /> : (
+            {renderTab(dataEng, (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <StatCard title="Data Quality Score" value={`${dataEng.quality_score}/100`} icon={<ShieldCheck className="w-5 h-5" />} color={dataEng.quality_score > 80 ? "text-green-600" : "text-orange-600"} />
@@ -299,7 +302,7 @@ export function Dashboard() {
                    </Card>
                 </div>
               </div>
-            )}
+            ))}
           </TabsContent>
         </Tabs>
       </div>
