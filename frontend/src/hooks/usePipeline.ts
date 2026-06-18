@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { PipelineStatusResponse, PipelineResults, AgentExecution } from '@/types';
+import type { PipelineStatusResponse, PipelineResults, AgentExecution, ChartItem } from '@/types';
 import { getPipelineStatus, getPipelineResults } from '@/services/api';
 
 interface UsePipelineOptions {
@@ -32,7 +32,6 @@ export function usePipeline({ runId, pollInterval = 3000, autoFetch = true }: Us
       const statusData = await getPipelineStatus(runId);
       setStatus(statusData);
 
-      // If pipeline is complete or failed, fetch full results
       if (statusData.run.status === 'completed' || statusData.run.status === 'failed') {
         const resultsData = await getPipelineResults(runId);
         setResults(resultsData);
@@ -69,18 +68,16 @@ export function usePipeline({ runId, pollInterval = 3000, autoFetch = true }: Us
   return { status, results, loading, error, refresh, isComplete };
 }
 
-// Helper to get agent output data from results
 export function getAgentOutput(
   results: PipelineResults | null,
   agentName: string
-): Record<string, unknown> | null {
+): Record<string, any> | null {
   if (!results?.executions) return null;
   const output = results.executions[agentName];
   if (!output || typeof output !== 'object') return null;
-  return output as Record<string, unknown>;
+  return output as Record<string, any>;
 }
 
-// Helper to get agent execution from status
 export function getAgentExecution(
   status: PipelineStatusResponse | null,
   agentName: string
@@ -89,18 +86,16 @@ export function getAgentExecution(
   return status.executions.find(e => e.agent_name === agentName) || null;
 }
 
-// Helper to get charts by type
 export function getChartsByType(
   results: PipelineResults | null,
   chartType: string
-): Array<Record<string, unknown>> {
+): Array<Record<string, any>> {
   if (!results?.charts) return [];
   return results.charts
     .filter(c => c.chart_type === chartType)
     .map(c => c.chart_data);
 }
 
-// Helper to get a specific chart
 export function getChart(
   results: PipelineResults | null,
   chartType: string
@@ -109,5 +104,3 @@ export function getChart(
   const chart = results.charts.find(c => c.chart_type === chartType);
   return chart || null;
 }
-
-import type { ChartItem } from '@/types';
