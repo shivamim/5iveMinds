@@ -23,6 +23,11 @@ class AgentStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+class ReportType(str, enum.Enum):
+    EXECUTIVE = "executive"
+    TECHNICAL = "technical"
+    SUMMARY = "summary"
+
 # ==========================================
 # DATASET MODEL
 # ==========================================
@@ -65,6 +70,7 @@ class PipelineRun(Base):
     run_metadata = Column(JSON, nullable=True)
 
     executions = relationship("AgentExecution", back_populates="run", cascade="all, delete-orphan")
+    reports = relationship("Report", back_populates="run", cascade="all, delete-orphan")
 
 # ==========================================
 # AGENT EXECUTION MODEL
@@ -76,7 +82,7 @@ class AgentExecution(Base):
     run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False)
     agent_name = Column(String, nullable=False)
     
-    # Maps to native 'agentstatus' ENUM (if it exists, otherwise falls back to string safely)
+    # Maps to native 'agentstatus' ENUM
     status = Column(
         PG_ENUM(AgentStatus, name="agentstatus", create_type=False),
         default=AgentStatus.PENDING,
@@ -91,3 +97,22 @@ class AgentExecution(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     run = relationship("PipelineRun", back_populates="executions")
+
+# ==========================================
+# REPORT MODEL (RESTORED)
+# ==========================================
+class Report(Base):
+    __tablename__ = "reports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False)
+    
+    # Using String instead of PG_ENUM for report_type to avoid DatatypeMismatchError 
+    # in case the Supabase ENUM is named differently or doesn't exist.
+    report_type = Column(String, nullable=False)
+    
+    content = Column(Text, nullable=True)
+    file_url = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    run = relationship("PipelineRun", back_populates="reports")
