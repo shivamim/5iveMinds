@@ -7,9 +7,6 @@ from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
 
-# ==========================================
-# PYTHON ENUMS
-# ==========================================
 class PipelineStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -28,12 +25,8 @@ class ReportType(str, enum.Enum):
     TECHNICAL = "technical"
     SUMMARY = "summary"
 
-# ==========================================
-# DATASET MODEL
-# ==========================================
 class Dataset(Base):
     __tablename__ = "datasets"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     filename = Column(String, nullable=False)
     row_count = Column(Integer, nullable=True)
@@ -41,78 +34,47 @@ class Dataset(Base):
     file_size_bytes = Column(Integer, nullable=True)
     missing_values_pct = Column(String, nullable=True)
     storage_url = Column(String, nullable=True)
+    dataset_schema = Column(JSON, nullable=True)
+    rich_profile = Column(JSON, nullable=True) # 🧠 Stores real histograms & correlations
     uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
-# ==========================================
-# PIPELINE RUN MODEL (FIXED ENUM CASTING)
-# ==========================================
 class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     dataset_id = Column(UUID(as_uuid=True), nullable=False)
     dataset_name = Column(String, nullable=True)
     dataset_path = Column(String, nullable=True)
     business_question = Column(String, nullable=False)
-    
-    # ✅ CRITICAL FIX: Maps to the native 'pipelinestatus' ENUM in Supabase
-    status = Column(
-        PG_ENUM(PipelineStatus, name="pipelinestatus", create_type=False),
-        default=PipelineStatus.QUEUED,
-        nullable=False
-    )
-    
+    status = Column(PG_ENUM(PipelineStatus, name="pipelinestatus", create_type=False), default=PipelineStatus.QUEUED, nullable=False)
     started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     total_time_ms = Column(Integer, nullable=True)
     quality_score_avg = Column(Float, nullable=True)
     created_by = Column(String, nullable=True)
     run_metadata = Column(JSON, nullable=True)
-
     executions = relationship("AgentExecution", back_populates="run", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="run", cascade="all, delete-orphan")
 
-# ==========================================
-# AGENT EXECUTION MODEL
-# ==========================================
 class AgentExecution(Base):
     __tablename__ = "agent_executions"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False)
     agent_name = Column(String, nullable=False)
-    
-    # Maps to native 'agentstatus' ENUM
-    status = Column(
-        PG_ENUM(AgentStatus, name="agentstatus", create_type=False),
-        default=AgentStatus.PENDING,
-        nullable=False
-    )
-    
+    status = Column(PG_ENUM(AgentStatus, name="agentstatus", create_type=False), default=AgentStatus.PENDING, nullable=False)
     quality_score = Column(Float, nullable=True)
     execution_time_ms = Column(Integer, nullable=True)
     output_data = Column(JSON, nullable=True)
     error_message = Column(Text, nullable=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
-
     run = relationship("PipelineRun", back_populates="executions")
 
-# ==========================================
-# REPORT MODEL (RESTORED)
-# ==========================================
 class Report(Base):
     __tablename__ = "reports"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False)
-    
-    # Using String instead of PG_ENUM for report_type to avoid DatatypeMismatchError 
-    # in case the Supabase ENUM is named differently or doesn't exist.
     report_type = Column(String, nullable=False)
-    
     content = Column(Text, nullable=True)
     file_url = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
     run = relationship("PipelineRun", back_populates="reports")
