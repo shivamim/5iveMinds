@@ -1,11 +1,9 @@
-import type {
-  TokenResponse, UserLogin, UserRegister, User, PipelineRunCreate, PipelineRunResponse,
-  PipelineStatusResponse, PipelineResults, DatasetUploadResponse, DatasetPreview, Dataset,
-  ChartItem, ReportItem, ExportRequest, AgentInfo,
-} from '@/types';
+// src/services/api.ts
+import type { PipelineRunCreate, PipelineRunResponse, PipelineStatusResponse, PipelineResults, DatasetUploadResponse } from '@/types';
 
-// Fallback to Railway URL if VITE_API_URL is not set in Render
-const API_BASE = import.meta.env.VITE_API_URL || 'https://your-backend.up.railway.app/api/v1';
+// 1. Safely construct the base URL
+const BASE_URL = import.meta.env.VITE_API_URL || 'https://your-backend.up.railway.app';
+const API_BASE = BASE_URL.endsWith('/api/v1') ? BASE_URL : `${BASE_URL}/api/v1`;
 
 async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('token');
@@ -18,6 +16,9 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
   const response = await fetch(`${API_BASE}${url}`, { ...options, headers });
 
   if (!response.ok) {
+    // Handle CORS or 404/500 errors gracefully
+    if (response.status === 404) throw new Error(`Endpoint not found: ${url}. Check VITE_API_URL.`);
+    if (response.status === 0) throw new Error(`CORS Error: Backend rejected the request. Check Railway CORS settings.`);
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
     throw new Error(error.detail || `HTTP ${response.status}`);
   }
@@ -51,9 +52,9 @@ export async function uploadDataset(file: File): Promise<DatasetUploadResponse> 
   });
 
   if (!response.ok) {
+    if (response.status === 413) throw new Error('File too large. Max size is 50MB.');
     const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
     throw new Error(error.detail || 'Upload failed');
   }
-
   return response.json();
 }
