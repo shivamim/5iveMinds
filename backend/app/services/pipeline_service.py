@@ -8,10 +8,11 @@ from sqlalchemy import select, update
 import httpx
 
 # Real Data Science Libraries
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
-from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, r2_score
+from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, r2_score, precision_score, recall_score, roc_auc_score, confusion_matrix, mean_absolute_error
 from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LinearRegression
 from scipy import stats
 
 from app.models import PipelineRun, AgentExecution, PipelineStatus, AgentStatus, Dataset
@@ -56,7 +57,6 @@ class PipelineService:
                 await db.commit()
                 if ws_manager: await ws_manager.broadcast(str(run_id), {"status": "running"})
 
-                # Execute Agents Sequentially
                 agents = ["data_engineer", "statistician", "ml_engineer", "designer", "strategist"]
                 agent_outputs = {}
                 
@@ -67,19 +67,12 @@ class PipelineService:
                     await db.commit()
                     if ws_manager: await ws_manager.broadcast(str(run_id), {"agent": agent_name, "status": "running"})
 
-                    # 🧠 REAL LOGIC ROUTING
-                    if agent_name == "data_engineer":
-                        output = self._run_data_engineer(profile, cols, row_count)
-                    elif agent_name == "statistician":
-                        output = self._run_statistician(sample_data, profile)
-                    elif agent_name == "ml_engineer":
-                        output = self._run_ml_engineer(sample_data)
-                    elif agent_name == "designer":
-                        output = self._run_designer(profile, agent_outputs.get("ml_engineer", {}), agent_outputs.get("statistician", {}))
-                    elif agent_name == "strategist":
-                        output = await self._run_strategist(run.business_question, row_count, cols, agent_outputs)
-                    else:
-                        output = {}
+                    if agent_name == "data_engineer": output = self._run_data_engineer(profile, cols, row_count, sample_data)
+                    elif agent_name == "statistician": output = self._run_statistician(sample_data, profile)
+                    elif agent_name == "ml_engineer": output = self._run_ml_engineer(sample_data)
+                    elif agent_name == "designer": output = self._run_designer(profile, agent_outputs.get("ml_engineer", {}), agent_outputs.get("statistician", {}))
+                    elif agent_name == "strategist": output = await self._run_strategist(run.business_question, row_count, cols, agent_outputs)
+                    else: output = {}
                         
                     agent_outputs[agent_name] = output
                     
@@ -93,34 +86,47 @@ class PipelineService:
                     status=PipelineStatus.COMPLETED, completed_at=datetime.utcnow(), total_time_ms=7500, quality_score_avg=99.0
                 ))
                 await db.commit()
-                if ws_manager: await ws_manager.broadcast(str(run_id), {"status": "completed"})
             except Exception as e:
                 logger.error(f"Pipeline {run_id} failed: {e}", exc_info=True)
                 await db.execute(update(PipelineRun).where(PipelineRun.id == run_id).values(status=PipelineStatus.FAILED))
                 await db.commit()
 
     # ==========================================
-    # 🧠 REAL AGENT LOGIC
+    # 🧠 DEEP ANALYTICS AGENTS
     # ==========================================
-    def _run_data_engineer(self, profile: dict, cols: list, rows: int) -> dict:
+    def _run_data_engineer(self, profile: dict, cols: list, rows: int, sample_data: list) -> dict:
+        df = pd.DataFrame(sample_data) if sample_data else pd.DataFrame()
         missingness = profile.get("missingness", {})
         total_missing = sum(missingness.values())
         total_cells = rows * len(cols) if cols else 1
         outliers = profile.get("outliers", {})
+        
+        # Calculate Duplicates
+        duplicates = int(df.duplicated().sum()) if not df.empty else 0
+        
+        # Calculate Data Quality Score (0-100)
+        missing_penalty = min(30, (total_missing / total_cells * 100) * 3) if total_cells > 0 else 0
+        outlier_penalty = min(20, (sum(outliers.values()) / max(rows, 1)) * 100)
+        dup_penalty = min(20, (duplicates / max(rows, 1)) * 100)
+        quality_score = max(0, 100 - missing_penalty - outlier_penalty - dup_penalty)
+
         return {
-            "row_count": rows, "column_count": len(cols), 
+            "row_count": rows, "column_count": len(cols), "duplicates": duplicates,
             "missing_values_pct": f"{(total_missing / total_cells * 100):.2f}%" if total_cells > 0 else "0%",
-            "outliers_detected": sum(outliers.values()), "schema": profile.get("numeric_stats", {}),
+            "outliers_detected": sum(outliers.values()), "quality_score": round(quality_score, 1),
+            "schema": profile.get("numeric_stats", {}),
             "imputation_log": [{"column": c, "action": "median_imputation", "rows_affected": missingness.get(c, 0)} for c in list(missingness.keys())[:5] if missingness.get(c, 0) > 0],
             "outlier_details": [{"column": c, "count": count, "method": "IQR"} for c, count in list(outliers.items())[:5] if count > 0]
         }
 
     def _run_statistician(self, sample_data: list, profile: dict) -> dict:
-        if not sample_data: return {"correlations": [], "summary": "No sample data."}
+        if not sample_data: return {"correlations": [], "normality": [], "vif": []}
         df = pd.DataFrame(sample_data)
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        real_correlations = []
+        numeric_df = df[numeric_cols].dropna()
         
+        # 1. Pearson Correlations
+        real_correlations = []
         for i in range(len(numeric_cols)):
             for j in range(i+1, len(numeric_cols)):
                 c1, c2 = numeric_cols[i], numeric_cols[j]
@@ -129,9 +135,45 @@ class PipelineService:
                     coeff, p_val = stats.pearsonr(valid[c1], valid[c2])
                     if not np.isnan(coeff):
                         real_correlations.append({"var1": c1, "var2": c2, "coeff": round(float(coeff), 4), "p_value": float(p_val), "significant": p_val < 0.05})
-                        
         real_correlations.sort(key=lambda x: abs(x["coeff"]), reverse=True)
-        return {"correlations": real_correlations[:10], "total_numeric_features": len(numeric_cols)}
+        
+        # 2. Normality (Shapiro-Wilk) & Distribution Shape
+        normality_tests = []
+        for col in numeric_cols[:10]: # Limit to 10 cols to prevent timeout
+            series = numeric_df[col].dropna()
+            if len(series) < 3: continue
+            sample = series.sample(min(5000, len(series)), random_state=42) if len(series) > 5000 else series
+            try:
+                stat, p_val = stats.shapiro(sample)
+                normality_tests.append({
+                    "feature": col, 
+                    "shapiro_p": float(p_val), 
+                    "is_normal": p_val > 0.05,
+                    "skewness": round(float(stats.skew(sample)), 3),
+                    "kurtosis": round(float(stats.kurtosis(sample)), 3)
+                })
+            except: pass
+            
+        # 3. Variance Inflation Factor (VIF) for Multicollinearity
+        vif_data = []
+        if len(numeric_cols) > 1 and len(numeric_df) > 10:
+            X = numeric_df.values
+            for i, col in enumerate(numeric_cols):
+                y = X[:, i]
+                X_others = np.delete(X, i, axis=1)
+                try:
+                    r2 = LinearRegression().fit(X_others, y).score(X_others, y)
+                    vif = 1 / (1 - r2) if r2 < 0.9999 else 100.0
+                    vif_data.append({"feature": col, "vif": round(vif, 2)})
+                except: pass
+            vif_data.sort(key=lambda x: x["vif"], reverse=True)
+
+        return {
+            "correlations": real_correlations[:10], 
+            "normality": normality_tests, 
+            "vif": vif_data[:10],
+            "total_numeric_features": len(numeric_cols)
+        }
 
     def _run_ml_engineer(self, sample_data: list) -> dict:
         if not sample_data: return {"error": "No data", "models_tested": [], "shap_values": []}
@@ -163,38 +205,74 @@ class PipelineService:
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         results = []
         
-        # Train RF
-        start = time.time()
-        rf = RandomForestClassifier(n_estimators=100, random_state=42) if is_classification else RandomForestRegressor(n_estimators=100, random_state=42)
-        rf.fit(X_train, y_train)
-        rf_preds = rf.predict(X_test)
-        if is_classification:
-            results.append({"name": "Random Forest", "accuracy": accuracy_score(y_test, rf_preds), "f1_score": f1_score(y_test, rf_preds, average='weighted', zero_division=0), "time": time.time()-start})
-        else:
-            results.append({"name": "Random Forest", "rmse": np.sqrt(mean_squared_error(y_test, rf_preds)), "r2_score": r2_score(y_test, rf_preds), "time": time.time()-start})
+        models = [
+            ("Random Forest", RandomForestClassifier(n_estimators=100, random_state=42) if is_classification else RandomForestRegressor(n_estimators=100, random_state=42)),
+            ("Gradient Boosting", GradientBoostingClassifier(n_estimators=100, random_state=42) if is_classification else GradientBoostingRegressor(n_estimators=100, random_state=42))
+        ]
+        
+        best_model_obj = None
+        best_score = -np.inf
+        
+        for name, model in models:
+            start = time.time()
+            model.fit(X_train, y_train)
+            preds = model.predict(X_test)
+            probs = model.predict_proba(X_test)[:, 1] if is_classification and hasattr(model, "predict_proba") else None
             
-        # Train GB
-        start = time.time()
-        gb = GradientBoostingClassifier(n_estimators=100, random_state=42) if is_classification else GradientBoostingRegressor(n_estimators=100, random_state=42)
-        gb.fit(X_train, y_train)
-        gb_preds = gb.predict(X_test)
-        if is_classification:
-            results.append({"name": "Gradient Boosting", "accuracy": accuracy_score(y_test, gb_preds), "f1_score": f1_score(y_test, gb_preds, average='weighted', zero_division=0), "time": time.time()-start})
-        else:
-            results.append({"name": "Gradient Boosting", "rmse": np.sqrt(mean_squared_error(y_test, gb_preds)), "r2_score": r2_score(y_test, gb_preds), "time": time.time()-start})
+            # Cross Validation (3-fold)
+            try:
+                cv_scores = cross_val_score(model, X, y, cv=3, scoring='accuracy' if is_classification else 'r2')
+                cv_mean = float(np.mean(cv_scores))
+                cv_std = float(np.std(cv_scores))
+            except: cv_mean, cv_std = 0.0, 0.0
             
-        best_model = gb if results[1].get("accuracy", results[1].get("r2_score", 0)) > results[0].get("accuracy", results[0].get("r2_score", 0)) else rf
-        importances = best_model.feature_importances_
+            metrics = {"name": name, "cv_mean": cv_mean, "cv_std": cv_std, "time": time.time()-start}
+            
+            if is_classification:
+                metrics["accuracy"] = accuracy_score(y_test, preds)
+                metrics["precision"] = precision_score(y_test, preds, average='weighted', zero_division=0)
+                metrics["recall"] = recall_score(y_test, preds, average='weighted', zero_division=0)
+                metrics["f1_score"] = f1_score(y_test, preds, average='weighted', zero_division=0)
+                if probs is not None:
+                    try: metrics["roc_auc"] = roc_auc_score(y_test, probs)
+                    except: metrics["roc_auc"] = 0.0
+                
+                # Confusion Matrix
+                cm = confusion_matrix(y_test, preds)
+                metrics["confusion_matrix"] = cm.tolist()
+                metrics["classes"] = le.classes_.tolist()
+                
+                score = metrics["accuracy"]
+            else:
+                metrics["rmse"] = np.sqrt(mean_squared_error(y_test, preds))
+                metrics["mae"] = mean_absolute_error(y_test, preds)
+                metrics["r2_score"] = r2_score(y_test, preds)
+                # Adjusted R2
+                n = len(y_test)
+                p = X.shape[1]
+                metrics["adj_r2"] = 1 - (1 - metrics["r2_score"]) * (n - 1) / (n - p - 1) if n > p + 1 else metrics["r2_score"]
+                score = metrics["r2_score"]
+                
+            results.append(metrics)
+            if score > best_score:
+                best_score = score
+                best_model_obj = model
+                
+        importances = best_model_obj.feature_importances_ if best_model_obj else []
         shap_values = sorted([{"feature": str(feat), "importance": float(imp)} for feat, imp in zip(X.columns, importances)], key=lambda x: x["importance"], reverse=True)[:10]
         
-        return {"target_column": target_col, "is_classification": is_classification, "models_tested": results, "shap_values": shap_values, "best_model": "Gradient Boosting" if best_model == gb else "Random Forest"}
+        return {
+            "target_column": target_col, "is_classification": is_classification, 
+            "models_tested": results, "shap_values": shap_values, 
+            "best_model": results[0]["name"] if results[0].get("accuracy", results[0].get("r2_score", 0)) >= results[1].get("accuracy", results[1].get("r2_score", 0)) else results[1]["name"]
+        }
 
     def _run_designer(self, profile: dict, ml: dict, stats_res: dict) -> dict:
         charts = []
         if ml.get("shap_values"):
-            charts.append({"chart_type": "bar_chart", "title": f"Real Feature Importance (Target: {ml.get('target_column')})", "chart_data": [{"name": s["feature"], "value": round(s["importance"] * 100, 2)} for s in ml["shap_values"]]})
-        if stats_res.get("correlations"):
-            charts.append({"chart_type": "bar_chart", "title": "Strongest Pearson Correlations", "chart_data": [{"name": f"{c['var1']} & {c['var2']}", "value": abs(c["coeff"])} for c in stats_res["correlations"][:5]]})
+            charts.append({"chart_type": "bar_chart", "title": f"Feature Importance (Target: {ml.get('target_column')})", "chart_data": [{"name": s["feature"], "value": round(s["importance"] * 100, 2)} for s in ml["shap_values"]]})
+        if stats_res.get("vif"):
+            charts.append({"chart_type": "bar_chart", "title": "Multicollinearity (VIF) - >5 is High Risk", "chart_data": [{"name": v["feature"], "value": v["vif"]} for v in stats_res["vif"][:7]]})
         for col, stats in list(profile.get("numeric_stats", {}).items())[:2]:
             if "histogram" in stats:
                 charts.append({"chart_type": "bar_chart", "title": f"Distribution of {col}", "chart_data": [{"name": h["bin"], "value": h["count"]} for h in stats["histogram"]]})
@@ -203,25 +281,29 @@ class PipelineService:
     async def _run_strategist(self, question: str, rows: int, cols: list, outputs: dict) -> dict:
         ml = outputs.get("ml_engineer", {})
         stats_res = outputs.get("statistician", {})
+        de = outputs.get("data_engineer", {})
         
         top_feats = ", ".join([s['feature'] for s in ml.get('shap_values', [])[:3]]) or "None"
         top_corrs = ", ".join([f"{c['var1']} & {c['var2']} ({c['coeff']})" for c in stats_res.get('correlations', [])[:3]]) or "None"
+        high_vif = [v['feature'] for v in stats_res.get('vif', []) if v['vif'] > 5]
         
         metric = "Accuracy" if ml.get("is_classification") else "R² Score"
-        best_score = ml.get("models_tested", [{}])[0].get("accuracy", ml.get("models_tested", [{}])[0].get("r2_score", 0))
+        best_model_data = next((m for m in ml.get("models_tested", []) if m["name"] == ml.get("best_model")), {})
+        best_score = best_model_data.get("accuracy", best_model_data.get("r2_score", 0))
+        cv_stability = best_model_data.get("cv_std", 0)
         
         prompt = f"""You are a Chief Data Scientist. 
-Dataset: {rows} rows. Target Variable: {ml.get('target_column', 'Unknown')}.
-Best ML Model: {ml.get('best_model', 'Unknown')} ({metric}: {best_score}).
-Top 3 Feature Drivers (SHAP): {top_feats}.
-Top 3 Statistical Correlations: {top_corrs}.
+Dataset: {rows} rows, Quality Score: {de.get('quality_score', 'N/A')}/100. Target: {ml.get('target_column', 'Unknown')}.
+Best Model: {ml.get('best_model')} ({metric}: {best_score:.3f}, CV Variance: ±{cv_stability:.3f}).
+Top Drivers (SHAP): {top_feats}. Top Correlations: {top_corrs}.
+High Multicollinearity (VIF > 5): {', '.join(high_vif) if high_vif else 'None'}.
 User Question: '{question}'
 
-Write a 3-paragraph executive summary. 
-Paragraph 1: Data Health & Target Variable analysis.
-Paragraph 2: Machine Learning Discoveries & Feature Importance.
-Paragraph 3: Statistical Relationships & Actionable Business Recommendations based on the user's question.
-Use markdown formatting for bolding and structure."""
+Write a 3-paragraph executive summary.
+Paragraph 1: Data Quality & Integrity (mention duplicates, missingness, and quality score).
+Paragraph 2: Machine Learning Stability & Feature Drivers (mention CV variance and SHAP).
+Paragraph 3: Statistical Relationships (mention VIF and correlations) & Actionable Recommendations.
+Use markdown formatting."""
 
         groq_key = getattr(settings, 'GROQ_API_KEY', None)
         if groq_key and not groq_key.startswith("gsk_xxx"):
@@ -231,7 +313,7 @@ Use markdown formatting for bolding and structure."""
                     if resp.status_code == 200: return {"report": resp.json()["choices"][0]["message"]["content"]}
             except Exception as e: logger.warning(f"Groq failed: {e}")
             
-        return {"report": f"# EXECUTIVE STRATEGY REPORT\n**Question:** {question}\n\n## 1. Data Health\nAnalyzed {rows} records.\n\n## 2. ML Discoveries\nBest Model: {ml.get('best_model')} ({metric}: {best_score}). Top Drivers: {top_feats}.\n\n## 3. Statistics\nTop Correlations: {top_corrs}."}
+        return {"report": f"# EXECUTIVE STRATEGY REPORT\n**Question:** {question}\n\n## 1. Data Health\nQuality Score: {de.get('quality_score')}/100.\n\n## 2. ML Discoveries\nBest Model: {ml.get('best_model')} ({metric}: {best_score:.3f}). Top Drivers: {top_feats}.\n\n## 3. Statistics\nTop Correlations: {top_corrs}. High VIF: {', '.join(high_vif) if high_vif else 'None'}."}
 
     # ==========================================
     # DB FETCHERS
