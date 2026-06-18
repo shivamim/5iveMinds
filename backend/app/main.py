@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 import time
 import logging
 
@@ -60,6 +61,30 @@ async def fiveminds_exception_handler(request: Request, exc: FiveMindsException)
         content={"detail": exc.detail, "error_code": exc.error_code}
     )
 
+# ✅ NEW: Global 422 validation error handler — returns clean JSON, never HTML
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(f"Validation error on {request.url.path}: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(), 
+            "error_code": "VALIDATION_ERROR"
+        },
+    )
+
+# ✅ NEW: Catch-all for any unhandled exception — prevents 500 HTML pages
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Internal server error: {str(exc)}", 
+            "error_code": "INTERNAL_ERROR"
+        },
+    )
+
 # Routers
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(pipeline.router, prefix="/api/v1", tags=["pipeline"])
@@ -70,8 +95,16 @@ app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "version": "2.0.0", "environment": settings.ENVIRONMENT}
+    return {
+        "status": "healthy", 
+        "version": "2.0.0", 
+        "environment": settings.ENVIRONMENT
+    }
 
 @app.get("/")
 async def root():
-    return {"message": "FiveMinds API v2.0", "docs": "/docs", "health": "/health"}
+    return {
+        "message": "FiveMinds API v2.0", 
+        "docs": "/docs", 
+        "health": "/health"
+    }
