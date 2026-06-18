@@ -1,102 +1,57 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  Database,
-  BarChart3,
-  BrainCircuit,
-  Lightbulb,
-  FileText,
-  History,
-  Settings,
-  Zap,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react';
-import { useState } from 'react';
-import { cn } from '@/lib/utils';
+import { Link, useLocation } from 'react-router-dom';
+import { LayoutDashboard, Database, History, Settings, BrainCircuit } from 'lucide-react';
 
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/data-engineering', icon: Database, label: 'Data Engineering' },
-  { to: '/statistics', icon: BarChart3, label: 'Statistics' },
-  { to: '/ml-results', icon: BrainCircuit, label: 'ML Results' },
-  { to: '/strategy', icon: Lightbulb, label: 'Strategy' },
-  { to: '/report', icon: FileText, label: 'Report' },
-  { to: '/history', icon: History, label: 'History' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
-];
+export function Layout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const isLandingPage = location.pathname === '/';
 
-export function Layout() {
-  const [collapsed, setCollapsed] = useState(false);
+  if (isLandingPage) {
+    return <div className="min-h-screen bg-gray-50">{children}</div>;
+  }
 
   return (
-    <div className="flex h-screen w-screen bg-gray-50 overflow-hidden">
-      {/* Sidebar */}
-      <aside
-        className={cn(
-          'bg-white border-r border-gray-200 flex flex-col transition-all duration-300 h-full',
-          collapsed ? 'w-16' : 'w-60'
-        )}
-      >
-        {/* Logo */}
-        <div className="flex items-center gap-3 px-4 h-16 border-b border-gray-100">
-          <Zap className="w-7 h-7 text-blue-600 flex-shrink-0" />
-          {!collapsed && (
-            <span className="text-lg font-bold text-gray-900 tracking-tight">FiveMinds</span>
-          )}
+    <div className="flex min-h-screen bg-gray-50">
+      <aside className="w-64 bg-white border-r border-gray-200 shadow-sm hidden md:flex md:flex-col z-20">
+        <div className="h-16 flex items-center px-6 border-b border-gray-100">
+          <BrainCircuit className="w-6 h-6 text-blue-600 mr-2" />
+          <span className="font-bold text-xl text-gray-900 tracking-tight">FiveMinds</span>
         </div>
-
-        {/* Nav Items */}
-        <nav className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                  'hover:bg-gray-100',
-                  isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-600'
-                )
-              }
-            >
-              <item.icon className="w-5 h-5 flex-shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </NavLink>
-          ))}
+        
+        <nav className="flex-1 px-4 py-6 space-y-1">
+          <NavItem to="/dashboard" icon={<LayoutDashboard className="w-5 h-5" />} label="Dashboard" isActive={location.pathname === '/dashboard'} />
+          <NavItem to="/data-engineering" icon={<Database className="w-5 h-5" />} label="Data Engineering" isActive={location.pathname === '/data-engineering'} />
+          <NavItem to="/history" icon={<History className="w-5 h-5" />} label="Run History" isActive={location.pathname === '/history'} />
+          <NavItem to="/settings" icon={<Settings className="w-5 h-5" />} label="Settings" isActive={location.pathname === '/settings'} />
         </nav>
-
-        {/* User Profile */}
-        <div className="border-t border-gray-100 p-3">
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-medium flex-shrink-0">
-              S
-            </div>
-            {!collapsed && (
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">Shivam Shukla</p>
-                <p className="text-xs text-gray-500 truncate">shivam@fiveminds.ai</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Collapse Toggle */}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center justify-center py-2 border-t border-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">
-        <Outlet />
+      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+        <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-end px-6 shadow-sm z-10">
+           <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm shadow-inner">
+             S
+           </div>
+        </header>
+        
+        <div className="flex-1 overflow-y-auto">
+          {children}
+        </div>
       </main>
     </div>
+  );
+}
+
+function NavItem({ to, icon, label, isActive }: { to: string; icon: React.ReactNode; label: string; isActive: boolean }) {
+  return (
+    <Link
+      to={to}
+      className={`flex items-center px-3 py-2.5 rounded-lg font-medium transition-colors duration-200 ${
+        isActive 
+          ? 'bg-blue-50 text-blue-700' 
+          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+      }`}
+    >
+      <span className={`mr-3 ${isActive ? 'text-blue-600' : 'text-gray-400'}`}>{icon}</span>
+      {label}
+    </Link>
   );
 }
