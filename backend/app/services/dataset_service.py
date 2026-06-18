@@ -1,11 +1,12 @@
+import io
+import uuid
 import logging
-from typing import Dict
+from datetime import datetime
+from typing import List, Optional
 import pandas as pd
-import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-import io
-from datetime import datetime, timezone
+from fastapi import UploadFile
 
 from app.models import Dataset
 from app.schemas import DatasetUploadResponse
@@ -13,33 +14,65 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# In-memory cache for dataframes - keyed by dataset UUID string
-# NOTE: For multi-worker deployments (Railway), consider using Redis
-_dataset_cache: Dict[str, pd.DataFrame] = {}
-
-def _get_or_create_bucket():
-    try:
-        from supabase import create_client
-        if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
-            return None
-        sb = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        return sb.storage.from_(settings.SUPABASE_BUCKET)
-    except Exception:
-        return None
-
 class DatasetService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def process_upload(self, file) -> DatasetUploadResponse:
-        contents = await file.read()
-        if not contents:
-            raise ValueError("Empty file")
+    def _get_or_create_bucket(self):
+        """✅ Gracefully handle missing supabase package or config."""
+        try:
+            from supabase import create_client
+        except ImportError:
+            logger.warning(
+                "supabase package not installed — files will only be "
+                "stored in DB, not Supabase Storage"
+            )
+            return None
+        
+        try:
+            supabase_url = getattr(settings, 'SUPABASE_URL', None)
+            supabase_key = getattr(settings, 'SUPABASE_KEY', None)
+            
+            if not supabase_url or not supabase_key:
+                logger.warning("SUPABASE_URL or SUPABASE_KEY not set — skipping storage upload")
+                return None
+            
+            sb = create_client(supabase_url, supabase_key)
+            bucket_name = getattr(settings, 'SUPABASE_BUCKET', 'datasets')
+            bucket = sb.storage.from_(bucket_name)
+            
+            # ✅ Try to create bucket if it doesn't exist (non-fatal)
+            try:
+                sb.storage.create_bucket(bucket_name)
+                logger.info(f"Created Supabase bucket: {bucket_name}")
+            except Exception:
+                # Bucket likely already exists — that's fine
+                pass
+            
+            return bucket
+        except Exception as e:
+            logger.warning(f"Supabase init failed: {e}")
+            return None
 
-        # Parse dataframe
+    async def process_upload(self, file: UploadFile) -> DatasetUploadResponse:
+        """Process uploaded file: parse, validate, store in DB and optionally Supabase Storage."""
+        contents = await file.read()
+        
+        # ✅ Parse dataframe with encoding fallback
         try:
             if file.filename.lower().endswith(".csv"):
-                df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+                # ✅ Try UTF-8 first, fall back to latin-1 for files with BOM or special chars
+                try:
+                    df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
+                except UnicodeDecodeError:
+                    df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
+                except Exception:
+                    # Last resort: try with errors='replace'
+                    df = pd.read_csv(
+                        io.BytesIO(contents), 
+                        encoding="utf-8", 
+                        encoding_errors="replace"
+                    )
             elif file.filename.lower().endswith((".xlsx", ".xls")):
                 df = pd.read_excel(io.BytesIO(contents))
             else:
@@ -48,185 +81,86 @@ class DatasetService:
             logger.error(f"Failed to parse uploaded file: {e}")
             raise ValueError(f"Failed to parse file: {e}")
 
-        row_count = len(df)
-        column_count = len(df.columns)
+        if df.empty:
+            raise ValueError("Uploaded file contains no data")
 
-        # Build real schema with actual pandas dtypes
-        schema = {}
-        column_stats = {}
+        # Generate dataset ID
+        dataset_id = str(uuid.uuid4())
+        
+        # Build schema information
+        schema_info = {}
         for col in df.columns:
             dtype = str(df[col].dtype)
-            null_count = int(df[col].isnull().sum())
-            unique_count = int(df[col].nunique(dropna=False))
-
-            if pd.api.types.is_numeric_dtype(df[col]):
-                type_category = "numeric"
-                col_min = float(df[col].min()) if not df[col].dropna().empty else None
-                col_max = float(df[col].max()) if not df[col].dropna().empty else None
-                col_mean = float(df[col].mean()) if not df[col].dropna().empty else None
-                col_std = float(df[col].std()) if not df[col].dropna().empty else None
-                column_stats[col] = {
-                    "type": type_category,
-                    "dtype": dtype,
-                    "null_count": null_count,
-                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
-                    "unique_count": unique_count,
-                    "min": col_min,
-                    "max": col_max,
-                    "mean": col_mean,
-                    "std": col_std,
-                }
-            elif pd.api.types.is_datetime64_any_dtype(df[col]):
-                type_category = "datetime"
-                column_stats[col] = {
-                    "type": type_category,
-                    "dtype": dtype,
-                    "null_count": null_count,
-                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
-                    "unique_count": unique_count,
-                }
-            elif pd.api.types.is_bool_dtype(df[col]):
-                type_category = "boolean"
-                true_count = int(df[col].sum()) if not df[col].dropna().empty else 0
-                column_stats[col] = {
-                    "type": type_category,
-                    "dtype": dtype,
-                    "null_count": null_count,
-                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
-                    "unique_count": unique_count,
-                    "true_count": true_count,
-                    "false_count": int(df[col].notna().sum()) - true_count,
-                }
-            else:
-                type_category = "categorical"
-                value_counts = df[col].value_counts().head(10).to_dict()
-                value_counts = {str(k): int(v) for k, v in value_counts.items()}
-                column_stats[col] = {
-                    "type": type_category,
-                    "dtype": dtype,
-                    "null_count": null_count,
-                    "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
-                    "unique_count": unique_count,
-                    "top_values": value_counts,
-                }
-
-            schema[col] = {
-                "type": type_category,
-                "dtype": dtype,
-                "null_count": null_count,
-                "null_pct": round(null_count / row_count * 100, 2) if row_count > 0 else 0,
-                "unique_count": unique_count,
+            schema_info[col] = {
+                "type": dtype,
+                "nullable": bool(df[col].isnull().any()),
+                "unique_count": int(df[col].nunique()),
+                "sample_values": df[col].dropna().head(3).tolist()
             }
 
-        # Store sample data
-        sample_data = []
-        try:
-            sample_df = df.head(5)
-            for _, row in sample_df.iterrows():
-                row_dict = {}
-                for col in df.columns:
-                    val = row[col]
-                    if pd.isna(val):
-                        row_dict[col] = None
-                    elif isinstance(val, (np.integer, np.floating)):
-                        row_dict[col] = float(val)
-                    elif isinstance(val, pd.Timestamp):
-                        row_dict[col] = val.isoformat()
-                    else:
-                        row_dict[col] = str(val)
-                sample_data.append(row_dict)
-        except Exception as e:
-            logger.warning(f"Failed to create sample data: {e}")
+        # Calculate missing value percentage
+        total_cells = df.size
+        missing_cells = df.isnull().sum().sum()
+        missing_pct = f"{(missing_cells / total_cells * 100):.2f}%" if total_cells > 0 else "0%"
 
-        # Upload to Supabase Storage
-        bucket = _get_or_create_bucket()
-        blob_url = None
-        try:
-            if bucket:
-                upload_path = f"datasets/{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{file.filename}"
-                bucket.upload(upload_path, contents)
-                blob_url = bucket.get_public_url(upload_path)
-        except Exception as e:
-            logger.warning(f"Supabase upload failed (storing locally): {e}")
+        # ✅ Try uploading to Supabase Storage (non-fatal if it fails)
+        storage_url = None
+        bucket = self._get_or_create_bucket()
+        if bucket:
+            try:
+                file_ext = file.filename.lower().split('.')[-1]
+                storage_path = f"{dataset_id}.{file_ext}"
+                bucket.upload(storage_path, contents)
+                storage_url = bucket.get_public_url(storage_path)
+                logger.info(f"Uploaded to Supabase Storage: {storage_path}")
+            except Exception as e:
+                logger.warning(f"Supabase storage upload failed: {e}")
 
-        # Save to DB
-        ds = Dataset(
+        # ✅ Save to database
+        new_dataset = Dataset(
+            id=dataset_id,
             filename=file.filename,
-            original_path=blob_url or "memory",
-            blob_url=blob_url,
-            row_count=row_count,
-            column_count=column_count,
+            row_count=len(df),
+            column_count=len(df.columns),
             file_size_bytes=len(contents),
-            schema=schema,
-            column_stats=column_stats,
-            sample_data=sample_data,
+            dataset_schema=schema_info,
+            missing_values_pct=missing_pct,
+            storage_url=storage_url,
+            uploaded_at=datetime.utcnow()
         )
-        self.db.add(ds)
+        
+        self.db.add(new_dataset)
         await self.db.commit()
-        await self.db.refresh(ds)
-
-        _dataset_cache[str(ds.id)] = df
-        logger.info(
-            f"Dataset {ds.id} ({file.filename}) uploaded: "
-            f"{row_count} rows, {column_count} columns"
-        )
+        await self.db.refresh(new_dataset)
 
         return DatasetUploadResponse(
-            id=ds.id,
-            filename=ds.filename,
-            row_count=ds.row_count,
-            column_count=ds.column_count,
-            file_size_bytes=ds.file_size_bytes,
-            dataset_schema=ds.schema,
-            uploaded_at=ds.uploaded_at,
+            id=dataset_id,
+            dataset_id=dataset_id,
+            filename=file.filename,
+            row_count=len(df),
+            column_count=len(df.columns),
+            file_size_bytes=len(contents),
+            dataset_schema=schema_info,
+            uploaded_at=new_dataset.uploaded_at
         )
 
-    async def list_datasets(self, limit: int, offset: int):
+    async def list_datasets(self, limit: int = 20, offset: int = 0) -> List[Dataset]:
+        """List all datasets with pagination."""
         result = await self.db.execute(
             select(Dataset).order_by(Dataset.uploaded_at.desc()).offset(offset).limit(limit)
         )
         return result.scalars().all()
 
-    async def get_preview(self, dataset_id, row_limit: int = 100):
-        result = await self.db.execute(select(Dataset).where(Dataset.id == dataset_id))
-        ds = result.scalar_one_or_none()
-        if not ds:
-            from fastapi import HTTPException
-            raise HTTPException(404, "Dataset not found")
+    async def get_dataset(self, dataset_id: str) -> Optional[Dataset]:
+        """Get a specific dataset by ID."""
+        result = await self.db.execute(
+            select(Dataset).where(Dataset.id == dataset_id)
+        )
+        return result.scalar_one_or_none()
 
-        df = _dataset_cache.get(str(dataset_id))
-        if df is None and ds.blob_url:
-            try:
-                if ds.filename.lower().endswith(".csv"):
-                    df = pd.read_csv(ds.blob_url)
-                else:
-                    df = pd.read_excel(ds.blob_url)
-                _dataset_cache[str(dataset_id)] = df
-            except Exception:
-                df = None
-
-        if df is None:
-            from fastapi import HTTPException
-            raise HTTPException(404, "Dataset data not available")
-
-        preview_df = df.head(row_limit)
-        return {
-            "columns": list(df.columns),
-            "rows": preview_df.to_dict(orient="records"),
-            "total_rows": len(df),
-            "sample_size": len(preview_df),
-        }
-
-    async def delete_dataset(self, dataset_id):
-        result = await self.db.execute(select(Dataset).where(Dataset.id == dataset_id))
-        ds = result.scalar_one_or_none()
-        if not ds:
-            from fastapi import HTTPException
-            raise HTTPException(404, "Dataset not found")
-        _dataset_cache.pop(str(dataset_id), None)
-        await self.db.execute(delete(Dataset).where(Dataset.id == dataset_id))
+    async def delete_dataset(self, dataset_id: str) -> None:
+        """Delete a dataset from the database."""
+        await self.db.execute(
+            delete(Dataset).where(Dataset.id == dataset_id)
+        )
         await self.db.commit()
-        logger.info(f"Dataset {dataset_id} deleted")
-
-    def get_cached_dataframe(self, dataset_id: str) -> pd.DataFrame | None:
-        return _dataset_cache.get(dataset_id)
