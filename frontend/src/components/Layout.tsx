@@ -1,12 +1,13 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, Outlet } from 'react-router-dom'; // <-- Added Outlet
 import { LayoutDashboard, Database, History, Settings, BrainCircuit } from 'lucide-react';
 
-export function Layout({ children }: { children: React.ReactNode }) {
+export function Layout() {
   const location = useLocation();
   const hideSidebar = ['/', '/upload', '/ask'].includes(location.pathname);
 
   if (hideSidebar) {
-    return <main className="min-h-screen bg-background">{children}</main>;
+    // Use <Outlet /> to render HomePage, UploadPage, etc.
+    return <main className="min-h-screen bg-background"><Outlet /></main>;
   }
 
   return (
@@ -26,7 +27,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </nav>
       </aside>
       <main className="flex-1 overflow-auto">
-        {children}
+        {/* Use <Outlet /> to render Dashboard, History, etc. */}
+        <Outlet />
       </main>
     </div>
   );
