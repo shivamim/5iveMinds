@@ -1,28 +1,66 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from typing import List
+from typing import List, Dict
 import uuid
 import logging
+import json
 
 from app.database import get_async_db, async_engine
 from app.schemas import PipelineRunCreate, PipelineRunResponse
 from app.services.pipeline_service import PipelineService
 
-# Adjust this import to match where your WebSocket ConnectionManager is defined
-try:
-    from app.core.websocket import ConnectionManager, ws_manager
-except ImportError:
-    # Fallback if your repo structure defines it differently
-    from app.websocket import ConnectionManager, ws_manager 
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ==========================================
+# ✅ WEBSOCKET MANAGER (Built-in to prevent ModuleNotFoundError)
+# ==========================================
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, run_id: str):
+        await websocket.accept()
+        if run_id not in self.active_connections:
+            self.active_connections[run_id] = []
+        self.active_connections[run_id].append(websocket)
+        logger.info(f"WebSocket connected for run {run_id}")
+
+    def disconnect(self, websocket: WebSocket, run_id: str):
+        if run_id in self.active_connections:
+            if websocket in self.active_connections[run_id]:
+                self.active_connections[run_id].remove(websocket)
+            if not self.active_connections[run_id]:
+                del self.active_connections[run_id]
+        logger.info(f"WebSocket disconnected for run {run_id}")
+
+    async def broadcast(self, run_id: str, message: dict):
+        if run_id in self.active_connections:
+            dead_connections = []
+            for connection in self.active_connections[run_id]:
+                try:
+                    await connection.send_text(json.dumps(message))
+                except Exception as e:
+                    logger.warning(f"Dead WebSocket connection: {e}")
+                    dead_connections.append(connection)
+            for conn in dead_connections:
+                self.disconnect(conn, run_id)
+
+    # Alias for services that might call send_personal_message
+    async def send_personal_message(self, message: dict, websocket: WebSocket):
+        try:
+            await websocket.send_text(json.dumps(message))
+        except Exception:
+            pass
+
+ws_manager = ConnectionManager()
+
+# ==========================================
 # ✅ CRITICAL FIX: Session factory for background tasks.
-# FastAPI closes the request-scoped DB session the millisecond the HTTP response is sent.
-# If we pass the live `db` session to a background task, it will crash with "Session closed".
-# We pass this factory so the background task can spawn its own independent, safe sessions.
+# FastAPI closes the HTTP session instantly. This factory lets 
+# background agents spawn their own safe, independent DB sessions.
+# ==========================================
 session_maker = async_sessionmaker(
     async_engine, class_=AsyncSession, expire_on_commit=False
 )
@@ -40,10 +78,9 @@ async def trigger_pipeline(
     service = PipelineService(db)
     
     try:
-        # 1. Create the initial run record in the database
         run = await service.create_run(request)
         
-        # 2. Add the heavy lifting to background tasks using the session_maker
+        # Pass the session_maker so background tasks don't crash
         background_tasks.add_task(
             service.execute_pipeline_with_session, 
             run.id, 
@@ -57,8 +94,7 @@ async def trigger_pipeline(
         raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {str(e)}")
 
 # ==========================================
-# 2. LIST RUNS (NEW ROUTE + HISTORY)
-# ⚠️ MUST BE PLACED BEFORE PARAMETERIZED ROUTES
+# 2. LIST RUNS (Frontend History Alias)
 # ==========================================
 @router.get("/pipeline", response_model=List[PipelineRunResponse])
 async def list_pipeline_runs(
@@ -81,7 +117,7 @@ async def get_pipeline_history(
     return await service.get_history(limit, offset)
 
 # ==========================================
-# 3. PARAMETERIZED ROUTES (STATUS, RESULTS, LOGS)
+# 3. PARAMETERIZED ROUTES
 # ==========================================
 @router.get("/pipeline/{run_id}/status")
 async def get_pipeline_status(
@@ -131,7 +167,6 @@ async def pipeline_websocket(
     await ws_manager.connect(websocket, str(run_id))
     try:
         while True:
-            # Keep connection alive and listen for any client pings/messages
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_text("pong")
