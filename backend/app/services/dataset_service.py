@@ -1,13 +1,11 @@
-import io
-import uuid
-import logging
+import io, uuid, logging
+import numpy as np
+import pandas as pd
 from datetime import datetime
 from typing import List, Optional
-import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from fastapi import UploadFile
-
 from app.models import Dataset
 from app.schemas import DatasetUploadResponse
 from app.config import settings
@@ -18,121 +16,70 @@ class DatasetService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    def _get_or_create_bucket(self):
-        """Gracefully handle missing supabase package or config."""
-        try:
-            from supabase import create_client
-        except ImportError:
-            return None
+    def _compute_rich_profile(self, df: pd.DataFrame) -> dict:
+        profile = {"numeric_stats": {}, "categorical_stats": {}, "correlations": [], "missingness": {}, "outliers": {}}
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        categorical_cols = df.select_dtypes(exclude=[np.number]).columns
         
-        try:
-            supabase_url = getattr(settings, 'SUPABASE_URL', None)
-            supabase_key = getattr(settings, 'SUPABASE_KEY', None)
+        for col in numeric_cols:
+            series = df[col].dropna()
+            if len(series) == 0: continue
+            q1, q3 = series.quantile(0.25), series.quantile(0.75)
+            iqr = q3 - q1
+            profile["outliers"][col] = int(((series < (q1 - 1.5 * iqr)) | (series > (q3 + 1.5 * iqr))).sum())
+            try:
+                counts, bin_edges = np.histogram(series, bins=min(10, max(3, len(series.unique()))))
+                profile["numeric_stats"][col] = {
+                    "mean": float(series.mean()), "std": float(series.std()),
+                    "histogram": [{"bin": f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}", "count": int(counts[i])} for i in range(len(counts))]
+                }
+            except: pass
+            profile["missingness"][col] = int(df[col].isnull().sum())
             
-            if not supabase_url or not supabase_key:
-                logger.warning("SUPABASE_URL or SUPABASE_KEY not set — skipping storage upload")
-                return None
+        for col in categorical_cols:
+            counts = df[col].value_counts().head(5)
+            profile["categorical_stats"][col] = [{"category": str(k), "count": int(v)} for k, v in counts.items()]
+            profile["missingness"][col] = int(df[col].isnull().sum())
             
-            sb = create_client(supabase_url, supabase_key)
-            bucket_name = getattr(settings, 'SUPABASE_BUCKET', 'datasets')
-            bucket = sb.storage.from_(bucket_name)
-            return bucket
-        except Exception as e:
-            logger.warning(f"Supabase init failed: {e}")
-            return None
+        if len(numeric_cols) > 1:
+            corr = df[numeric_cols].corr()
+            for i in range(len(numeric_cols)):
+                for j in range(i+1, len(numeric_cols)):
+                    val = corr.iloc[i, j]
+                    if not np.isnan(val):
+                        profile["correlations"].append({"var1": numeric_cols[i], "var2": numeric_cols[j], "coeff": round(float(val), 3)})
+        return profile
 
     async def process_upload(self, file: UploadFile) -> DatasetUploadResponse:
-        """Process uploaded file: parse, validate, store in DB."""
         contents = await file.read()
-        
-        # Parse dataframe with encoding fallback
         try:
             if file.filename.lower().endswith(".csv"):
-                try:
-                    df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
-                except UnicodeDecodeError:
-                    df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
-            elif file.filename.lower().endswith((".xlsx", ".xls")):
-                df = pd.read_excel(io.BytesIO(contents))
-            else:
-                raise ValueError("Unsupported file format. Use CSV or Excel.")
-        except Exception as e:
-            logger.error(f"Failed to parse uploaded file: {e}")
-            raise ValueError(f"Failed to parse file: {e}")
-
-        if df.empty:
-            raise ValueError("Uploaded file contains no data")
+                try: df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
+                except: df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
+            else: df = pd.read_excel(io.BytesIO(contents))
+        except Exception as e: raise ValueError(f"Failed to parse file: {e}")
 
         dataset_id = str(uuid.uuid4())
+        schema_info = {col: {"type": str(df[col].dtype), "nullable": bool(df[col].isnull().any())} for col in df.columns}
+        rich_profile = self._compute_rich_profile(df)
         
-        # Build schema information
-        schema_info = {}
-        for col in df.columns:
-            dtype = str(df[col].dtype)
-            schema_info[col] = {
-                "type": dtype,
-                "nullable": bool(df[col].isnull().any()),
-                "unique_count": int(df[col].nunique()),
-            }
-
-        # Calculate missing value percentage
-        total_cells = df.size
-        missing_cells = df.isnull().sum().sum()
-        missing_pct = f"{(missing_cells / total_cells * 100):.2f}%" if total_cells > 0 else "0%"
-
-        # Try uploading to Supabase Storage (non-fatal)
-        storage_url = None
-        bucket = self._get_or_create_bucket()
-        if bucket:
-            try:
-                file_ext = file.filename.lower().split('.')[-1]
-                storage_path = f"{dataset_id}.{file_ext}"
-                bucket.upload(storage_path, contents)
-                storage_url = bucket.get_public_url(storage_path)
-            except Exception as e:
-                logger.warning(f"Supabase storage upload failed: {e}")
-
-        # 🛡️ BULLETPROOF DB SAVE: Dynamically map only to columns that actually exist in your model
         valid_columns = {c.key for c in Dataset.__table__.columns}
-        
         potential_data = {
-            "id": dataset_id,
-            "filename": file.filename,
-            "row_count": len(df),
-            "column_count": len(df.columns),
-            "file_size_bytes": len(contents),
-            "dataset_schema": schema_info,
-            "schema_info": schema_info,  # Fallback names
-            "schema": schema_info,       # Fallback names
-            "missing_values_pct": missing_pct,
-            "storage_url": storage_url,
-            "uploaded_at": datetime.utcnow()
+            "id": dataset_id, "filename": file.filename, "row_count": len(df), "column_count": len(df.columns),
+            "file_size_bytes": len(contents), "dataset_schema": schema_info, "schema_info": schema_info,
+            "rich_profile": rich_profile, "uploaded_at": datetime.utcnow()
         }
-        
-        # Filter out any keys that aren't actual columns in your database table
         filtered_data = {k: v for k, v in potential_data.items() if k in valid_columns}
         
         new_dataset = Dataset(**filtered_data)
-        
         self.db.add(new_dataset)
         await self.db.commit()
         await self.db.refresh(new_dataset)
 
-        return DatasetUploadResponse(
-            id=dataset_id,
-            dataset_id=dataset_id,
-            filename=file.filename,
-            row_count=len(df),
-            column_count=len(df.columns),
-            file_size_bytes=len(contents),
-            dataset_schema=schema_info,
-            uploaded_at=new_dataset.uploaded_at if hasattr(new_dataset, 'uploaded_at') else datetime.utcnow()
-        )
+        return DatasetUploadResponse(id=dataset_id, filename=file.filename, row_count=len(df), column_count=len(df.columns))
 
     async def list_datasets(self, limit: int = 20, offset: int = 0) -> List[Dataset]:
-        result = await self.db.execute(
-            select(Dataset).order_by(getattr(Dataset, 'uploaded_at', Dataset.id).desc()).offset(offset).limit(limit)
-        )
+        result = await self.db.execute(select(Dataset).order_by(Dataset.uploaded_at.desc()).offset(offset).limit(limit))
         return result.scalars().all()
 
     async def get_dataset(self, dataset_id: str) -> Optional[Dataset]:
