@@ -1,12 +1,15 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, JSON, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship, declarative_base
-from sqlalchemy.sql import func
 import uuid
 import enum
+from datetime import datetime
+from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, JSON, Text
+from sqlalchemy.dialects.postgresql import UUID, ENUM as PG_ENUM
+from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
 
+# ==========================================
+# PYTHON ENUMS
+# ==========================================
 class PipelineStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -19,93 +22,72 @@ class AgentStatus(str, enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    SKIPPED = "skipped"
 
-class ReportType(str, enum.Enum):
-    EXECUTIVE = "executive"
-    TECHNICAL = "technical"
-    SUMMARY = "summary"
-
-class PipelineRun(Base):
-    __tablename__ = "pipeline_runs"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.id"), nullable=True)
-    dataset = relationship("Dataset", backref="pipeline_runs")
-    dataset_name = Column(String(255))
-    dataset_path = Column(Text)
-    business_question = Column(Text)
-    status = Column(String(50), default=PipelineStatus.QUEUED.value)
-    started_at = Column(DateTime(timezone=True), server_default=func.now())
-    completed_at = Column(DateTime(timezone=True))
-    total_time_ms = Column(Integer)
-    quality_score_avg = Column(Float)
-    created_by = Column(String(255))
-    run_metadata = Column(JSON)
-
-    executions = relationship(
-        "AgentExecution", back_populates="pipeline_run", cascade="all, delete-orphan"
-    )
-    reports = relationship(
-        "Report", back_populates="pipeline_run", cascade="all, delete-orphan"
-    )
-    charts = relationship(
-        "Chart", back_populates="pipeline_run", cascade="all, delete-orphan"
-    )
-
-class AgentExecution(Base):
-    __tablename__ = "agent_executions"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    pipeline_run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id"))
-    agent_name = Column(String(50))
-    status = Column(String(50), default=AgentStatus.PENDING.value)
-    quality_score = Column(Float)
-    execution_time_ms = Column(Integer)
-    output_data = Column(JSON)
-    error_message = Column(Text)
-    started_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
-
-    pipeline_run = relationship("PipelineRun", back_populates="executions")
-
+# ==========================================
+# DATASET MODEL
+# ==========================================
 class Dataset(Base):
     __tablename__ = "datasets"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    filename = Column(String(255))
-    original_path = Column(Text)
-    blob_url = Column(Text)
-    row_count = Column(Integer)
-    column_count = Column(Integer)
-    file_size_bytes = Column(Integer)
-    schema = Column(JSON)
-    column_stats = Column(JSON)
-    sample_data = Column(JSON)
-    uploaded_by = Column(String(255))
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    filename = Column(String, nullable=False)
+    row_count = Column(Integer, nullable=True)
+    column_count = Column(Integer, nullable=True)
+    file_size_bytes = Column(Integer, nullable=True)
+    missing_values_pct = Column(String, nullable=True)
+    storage_url = Column(String, nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
-class Report(Base):
-    __tablename__ = "reports"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    pipeline_run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id"))
-    report_type = Column(String(50))
-    content = Column(Text)
-    file_path = Column(Text)
-    generated_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    pipeline_run = relationship("PipelineRun", back_populates="reports")
-
-class Chart(Base):
-    __tablename__ = "charts"
+# ==========================================
+# PIPELINE RUN MODEL (FIXED ENUM CASTING)
+# ==========================================
+class PipelineRun(Base):
+    __tablename__ = "pipeline_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    pipeline_run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id"))
-    agent_name = Column(String(50))
-    chart_type = Column(String(50))
-    chart_data = Column(JSON)
-    plotly_spec = Column(JSON)
-    generated_at = Column(DateTime(timezone=True), server_default=func.now())
+    dataset_id = Column(UUID(as_uuid=True), nullable=False)
+    dataset_name = Column(String, nullable=True)
+    dataset_path = Column(String, nullable=True)
+    business_question = Column(String, nullable=False)
+    
+    # ✅ CRITICAL FIX: Maps to the native 'pipelinestatus' ENUM in Supabase
+    status = Column(
+        PG_ENUM(PipelineStatus, name="pipelinestatus", create_type=False),
+        default=PipelineStatus.QUEUED,
+        nullable=False
+    )
+    
+    started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    total_time_ms = Column(Integer, nullable=True)
+    quality_score_avg = Column(Float, nullable=True)
+    created_by = Column(String, nullable=True)
+    run_metadata = Column(JSON, nullable=True)
 
-    pipeline_run = relationship("PipelineRun", back_populates="charts")
+    executions = relationship("AgentExecution", back_populates="run", cascade="all, delete-orphan")
+
+# ==========================================
+# AGENT EXECUTION MODEL
+# ==========================================
+class AgentExecution(Base):
+    __tablename__ = "agent_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False)
+    agent_name = Column(String, nullable=False)
+    
+    # Maps to native 'agentstatus' ENUM (if it exists, otherwise falls back to string safely)
+    status = Column(
+        PG_ENUM(AgentStatus, name="agentstatus", create_type=False),
+        default=AgentStatus.PENDING,
+        nullable=False
+    )
+    
+    quality_score = Column(Float, nullable=True)
+    execution_time_ms = Column(Integer, nullable=True)
+    output_data = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    run = relationship("PipelineRun", back_populates="executions")
