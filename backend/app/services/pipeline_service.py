@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 import httpx
 
-# Real Data Science Libraries
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, r2_score, precision_score, recall_score, roc_auc_score, confusion_matrix, mean_absolute_error
@@ -21,25 +20,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# 🛡️ JSON SERIALIZATION SILVER BULLET
-# Recursively converts numpy types to native Python types
-# ==========================================
 def convert_to_native_types(obj):
-    if isinstance(obj, dict):
-        return {k: convert_to_native_types(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_native_types(i) for i in obj]
-    elif isinstance(obj, (np.bool_,)):
-        return bool(obj)
-    elif isinstance(obj, (np.integer,)):
-        return int(obj)
-    elif isinstance(obj, (np.floating,)):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, (np.str_,)):
-        return str(obj)
+    if isinstance(obj, dict): return {k: convert_to_native_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list): return [convert_to_native_types(i) for i in obj]
+    elif isinstance(obj, (np.bool_,)): return bool(obj)
+    elif isinstance(obj, (np.integer,)): return int(obj)
+    elif isinstance(obj, (np.floating,)): return float(obj)
+    elif isinstance(obj, np.ndarray): return obj.tolist()
+    elif isinstance(obj, (np.str_,)): return str(obj)
     return obj
 
 class PipelineService:
@@ -76,7 +64,6 @@ class PipelineService:
                 
                 await db.execute(update(PipelineRun).where(PipelineRun.id == run_id).values(status=PipelineStatus.RUNNING))
                 await db.commit()
-                if ws_manager: await ws_manager.broadcast(str(run_id), {"status": "running"})
 
                 agents = ["data_engineer", "statistician", "ml_engineer", "designer", "strategist"]
                 agent_outputs = {}
@@ -86,7 +73,6 @@ class PipelineService:
                     agent_exec = AgentExecution(id=exec_id, run_id=run_id, agent_name=agent_name, status=AgentStatus.RUNNING, started_at=datetime.utcnow())
                     db.add(agent_exec)
                     await db.commit()
-                    if ws_manager: await ws_manager.broadcast(str(run_id), {"agent": agent_name, "status": "running"})
 
                     if agent_name == "data_engineer": output = self._run_data_engineer(profile, cols, row_count, sample_data)
                     elif agent_name == "statistician": output = self._run_statistician(sample_data, profile)
@@ -96,15 +82,12 @@ class PipelineService:
                     else: output = {}
                         
                     agent_outputs[agent_name] = output
-                    
-                    # 🛡️ CRITICAL FIX: Sanitize numpy types before saving to Postgres JSONB
                     safe_output = convert_to_native_types(output)
                     
                     await db.execute(update(AgentExecution).where(AgentExecution.id == exec_id).values(
                         status=AgentStatus.COMPLETED, output_data=safe_output, completed_at=datetime.utcnow(), execution_time_ms=1500, quality_score=99.0
                     ))
                     await db.commit()
-                    if ws_manager: await ws_manager.broadcast(str(run_id), {"agent": agent_name, "status": "completed"})
 
                 await db.execute(update(PipelineRun).where(PipelineRun.id == run_id).values(
                     status=PipelineStatus.COMPLETED, completed_at=datetime.utcnow(), total_time_ms=7500, quality_score_avg=99.0
@@ -115,9 +98,6 @@ class PipelineService:
                 await db.execute(update(PipelineRun).where(PipelineRun.id == run_id).values(status=PipelineStatus.FAILED))
                 await db.commit()
 
-    # ==========================================
-    # 🧠 DEEP ANALYTICS AGENTS
-    # ==========================================
     def _run_data_engineer(self, profile: dict, cols: list, rows: int, sample_data: list) -> dict:
         df = pd.DataFrame(sample_data) if sample_data else pd.DataFrame()
         missingness = profile.get("missingness", {})
@@ -144,6 +124,12 @@ class PipelineService:
         if not sample_data: return {"correlations": [], "normality": [], "vif": []}
         df = pd.DataFrame(sample_data)
         numeric_cols = df.select_dtypes(include=[np.number]).columns
+        
+        # 🛡️ CRITICAL FIX: Cap at 20 columns to prevent O(N^2) math explosion and Railway OOM crashes
+        if len(numeric_cols) > 20:
+            variances = df[numeric_cols].var().sort_values(ascending=False)
+            numeric_cols = variances.head(20).index
+            
         numeric_df = df[numeric_cols].dropna()
         
         real_correlations = []
@@ -154,12 +140,7 @@ class PipelineService:
                 if len(valid) > 2:
                     coeff, p_val = stats.pearsonr(valid[c1], valid[c2])
                     if not np.isnan(coeff):
-                        real_correlations.append({
-                            "var1": c1, "var2": c2, 
-                            "coeff": round(float(coeff), 4), 
-                            "p_value": float(p_val), 
-                            "significant": bool(p_val < 0.05) # Explicit native bool cast
-                        })
+                        real_correlations.append({"var1": c1, "var2": c2, "coeff": round(float(coeff), 4), "p_value": float(p_val), "significant": bool(p_val < 0.05)})
         real_correlations.sort(key=lambda x: abs(x["coeff"]), reverse=True)
         
         normality_tests = []
@@ -169,10 +150,7 @@ class PipelineService:
             sample = series.sample(min(5000, len(series)), random_state=42) if len(series) > 5000 else series
             try:
                 stat, p_val = stats.shapiro(sample)
-                normality_tests.append({
-                    "feature": col, "shapiro_p": float(p_val), "is_normal": bool(p_val > 0.05),
-                    "skewness": round(float(stats.skew(sample)), 3), "kurtosis": round(float(stats.kurtosis(sample)), 3)
-                })
+                normality_tests.append({"feature": col, "shapiro_p": float(p_val), "is_normal": bool(p_val > 0.05), "skewness": round(float(stats.skew(sample)), 3), "kurtosis": round(float(stats.kurtosis(sample)), 3)})
             except: pass
             
         vif_data = []
@@ -215,6 +193,11 @@ class PipelineService:
             
         for col in X.columns:
             if X[col].isna().any(): X[col].fillna(X[col].median(), inplace=True)
+            
+        # 🛡️ CRITICAL FIX: Cap features at 20 to prevent AutoML timeout
+        if X.shape[1] > 20:
+            variances = X.var().sort_values(ascending=False)
+            X = X[variances.head(20).index]
             
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         results = []
@@ -324,9 +307,6 @@ Use markdown formatting."""
             
         return {"report": f"# EXECUTIVE STRATEGY REPORT\n**Question:** {question}\n\n## 1. Data Health\nQuality Score: {de.get('quality_score')}/100.\n\n## 2. ML Discoveries\nBest Model: {ml.get('best_model')} ({metric}: {best_score:.3f}). Top Drivers: {top_feats}.\n\n## 3. Statistics\nTop Correlations: {top_corrs}. High VIF: {', '.join(high_vif) if high_vif else 'None'}."}
 
-    # ==========================================
-    # DB FETCHERS
-    # ==========================================
     async def get_history(self, limit: int = 20, offset: int = 0) -> List[PipelineRun]:
         result = await self.db.execute(select(PipelineRun).order_by(PipelineRun.started_at.desc()).offset(offset).limit(limit))
         return result.scalars().all()
