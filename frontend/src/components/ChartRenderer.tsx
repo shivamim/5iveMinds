@@ -2,7 +2,6 @@ import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ScatterChart, Scat
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#3b82f6'];
 
-// 🎨 Premium Glass-morphism Tooltip
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -34,7 +33,6 @@ export function ChartRenderer({ chart }: { chart: any }) {
   const valueKeys = keys.filter(k => k !== nameKey && typeof data[0][k] === 'number');
   const valueKey = valueKeys[0] || 'value';
 
-  // 1. PIE CHART (Premium Donut Style)
   if (type.includes('pie')) {
     const pieData = data.map(d => ({ name: d[nameKey], value: d[valueKey] || d.value || 0 }));
     return (
@@ -58,7 +56,6 @@ export function ChartRenderer({ chart }: { chart: any }) {
     );
   }
 
-  // 2. SCATTER PLOT (For correlations)
   if (type.includes('scatter')) {
     return (
       <ResponsiveContainer width="100%" height={300}>
@@ -73,7 +70,6 @@ export function ChartRenderer({ chart }: { chart: any }) {
     );
   }
 
-  // 3. AREA CHART (For distributions/histograms - looks 10x more premium)
   if (type.includes('area') || type.includes('histogram') || type.includes('distribution') || nameKey === 'bin') {
     return (
       <ResponsiveContainer width="100%" height={300}>
@@ -94,7 +90,6 @@ export function ChartRenderer({ chart }: { chart: any }) {
     );
   }
 
-  // 4. BAR CHART (Default, but make it premium with gradients)
   return (
     <ResponsiveContainer width="100%" height={300}>
       <BarChart data={data} margin={{ top: 20, right: 20, left: 0, bottom: 5 }} layout={data.length > 5 && nameKey === 'feature' ? "vertical" : "horizontal"}>
