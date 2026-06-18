@@ -5,8 +5,8 @@ import { UploadPage } from '@/pages/UploadPage';
 import { AskPage } from '@/pages/AskPage';
 import { Dashboard } from '@/pages/Dashboard';
 import { DataEngineering } from '@/pages/DataEngineering';
-import History from '@/pages/History';
-import Settings from '@/pages/Settings';
+import { History } from '@/pages/History';
+import { Settings } from '@/pages/Settings';
 
 function App() {
   return (
