@@ -24,54 +24,59 @@ async def lifespan(app: FastAPI):
         # 1. Create tables if they don't exist
         await conn.run_sync(Base.metadata.create_all)
         
-        # 2. 🛡️ AUTO-MIGRATION: Add missing columns to existing tables dynamically
+        # 2. 🛡️ EXHAUSTIVE AUTO-MIGRATION: Raw SQL to guarantee columns exist
         def sync_migrate(sync_conn):
             inspector = inspect(sync_conn)
             table_names = inspector.get_table_names()
             
-            # Define all columns that might be missing from older DB schemas
-            migrations = {
-                "datasets": [
-                    ("missing_values_pct", "VARCHAR"),
-                    ("storage_url", "VARCHAR"),
-                    ("dataset_schema", "JSONB"),
-                    ("schema_info", "JSONB"),
-                    ("schema", "JSONB")
-                ],
-                "pipeline_runs": [
-                    ("dataset_name", "VARCHAR"),
-                    ("dataset_path", "VARCHAR"),
-                    ("business_question", "TEXT"),
-                    ("total_time_ms", "INTEGER"),
-                    ("quality_score_avg", "FLOAT"),
-                    ("created_by", "VARCHAR"),
-                    ("run_metadata", "JSONB")
-                ],
-                "agent_executions": [
-                    ("quality_score", "FLOAT"),
-                    ("execution_time_ms", "INTEGER"),
-                    ("output_data", "JSONB"),
-                    ("error_message", "TEXT")
-                ],
-                "reports": [
-                    ("content", "TEXT"),
-                    ("file_url", "VARCHAR"),
-                    ("report_type", "VARCHAR")
-                ]
-            }
+            # Raw SQL migrations to guarantee exact Postgres syntax
+            raw_migrations = [
+                # DATASETS
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS missing_values_pct VARCHAR",
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS storage_url VARCHAR",
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS dataset_schema JSONB",
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS schema_info JSONB",
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS schema JSONB",
+                
+                # PIPELINE RUNS
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS dataset_name VARCHAR",
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS dataset_path VARCHAR",
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS business_question TEXT",
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS total_time_ms INTEGER",
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality_score_avg FLOAT",
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS created_by VARCHAR",
+                "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS run_metadata JSONB",
+                
+                # AGENT EXECUTIONS (FIXES THE run_id CRASH)
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS run_id UUID",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS agent_name VARCHAR",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS quality_score FLOAT",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS execution_time_ms INTEGER",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS output_data JSONB",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS error_message TEXT",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE",
+                "ALTER TABLE agent_executions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WITH TIME ZONE",
+                
+                # REPORTS
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS run_id UUID",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS content TEXT",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS file_url VARCHAR",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS report_type VARCHAR",
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE"
+            ]
             
-            for table_name, cols in migrations.items():
-                if table_name in table_names:
-                    existing_cols = [c['name'] for c in inspector.get_columns(table_name)]
-                    for col_name, col_type in cols:
-                        if col_name not in existing_cols:
-                            sql = f'ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}'
-                            logger.info(f"AUTO-MIGRATE: {sql}")
-                            sync_conn.execute(text(sql))
-                            
+            for table in ["datasets", "pipeline_runs", "agent_executions", "reports"]:
+                if table in table_names:
+                    for sql in raw_migrations:
+                        if f"ALTER TABLE {table}" in sql:
+                            try:
+                                sync_conn.execute(text(sql))
+                            except Exception as e:
+                                logger.warning(f"AUTO-MIGRATE WARNING: {sql} -> {e}")
+                                
         await conn.run_sync(sync_migrate)
         
-    logger.info("FiveMinds API started — tables ensured and auto-migrated")
+    logger.info("FiveMinds API started — tables ensured and fully auto-migrated")
     yield
     await async_engine.dispose()
     logger.info("FiveMinds API shutdown — engine disposed")
